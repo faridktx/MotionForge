@@ -1,7 +1,8 @@
+import "fake-indexeddb/auto";
 import { addTransformKeyframes, createEmptyClip } from "@motionforge/engine";
 import { beforeEach, describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { saveProject } from "../lib/project/serialize.js";
+import { saveAutosaveSnapshot, saveProject } from "../lib/project/serialize.js";
 import { animationStore } from "./animationStore.js";
 import { sceneStore } from "./sceneStore.js";
 import { undoStore } from "./undoStore.js";
@@ -123,7 +124,7 @@ describe("animationStore undo and dirty behavior", () => {
     expect(animationStore.getKeyframesForObject("cube")).toHaveLength(9);
   });
 
-  it("marks dirty on keyframe CRUD and clears dirty after save", () => {
+  it("marks dirty on keyframe CRUD and clears dirty after save", async () => {
     sceneStore.clearDirty();
     expect(sceneStore.isDirty()).toBe(false);
 
@@ -147,7 +148,7 @@ describe("animationStore undo and dirty behavior", () => {
     animationStore.removeKeyframes([moved], { source: "timeline", label: "Delete Keyframes" });
     expect(sceneStore.isDirty()).toBe(true);
 
-    const saved = saveProject();
+    const saved = await saveProject();
     expect(saved).toBe(true);
     expect(sceneStore.isDirty()).toBe(false);
   });
@@ -209,5 +210,15 @@ describe("animationStore undo and dirty behavior", () => {
     undoStore.undo();
     const restored = animationStore.getKeyframesForObject("cube", ["position.x"]);
     expect(restored[0].interpolation).toBe("linear");
+  });
+
+  it("autosave persists snapshot without clearing dirty flag", async () => {
+    sceneStore.clearDirty();
+    animationStore.addAllKeyframesForSelected({ source: "shortcut", label: "Keyframe Transform" });
+    expect(sceneStore.isDirty()).toBe(true);
+
+    const autosaved = await saveAutosaveSnapshot();
+    expect(autosaved).toBe(true);
+    expect(sceneStore.isDirty()).toBe(true);
   });
 });

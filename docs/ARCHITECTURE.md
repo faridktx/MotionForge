@@ -25,6 +25,8 @@ Each frame:
 
 No React state is read or written during the loop.
 
+`renderer.info` stats are sampled on a fixed interval (500ms) when enabled from Settings, not per frame.
+
 ## Transform Gizmo
 
 The gizmo is a custom implementation using Three.js primitives (no external library). It lives in `lib/three/gizmo/`.
@@ -123,13 +125,17 @@ The timeline is split into a left track list and a right time area:
 - **Interactions**:
   - Click empty ruler/lane to scrub
   - Click key to select, `Shift+Click` to toggle multi-select
-  - Drag a marquee rectangle in lane area to box-select keyframes
+  - `Shift+Drag` in lane area creates a marquee rectangle for box-selection
+  - Drag timeline background horizontally to pan
   - Drag selected keys horizontally to move in time (snap 0.1s by default, hold `Alt` to disable)
   - `Ctrl+C` / `Ctrl+V` copies and pastes selected keys at playhead while preserving relative offsets
   - `Alt+ArrowLeft` / `Alt+ArrowRight` nudges selected keys by small time increments
   - `Delete` / `Backspace` or trash button removes selected keys
 - **Editing panel**: Single selected key supports editing time, value, and interpolation (`linear`/`step`/`easeIn`/`easeOut`/`easeInOut`), all undoable
-- **Zoom**: `pixelsPerSecond` is stored in `timelineStore` and controlled by slider or `Ctrl+Wheel`
+- **Zoom/Snap**:
+  - wheel zoom + slider control `pixelsPerSecond`
+  - snap presets in `timelineStore`: `off`, `0.1s`, `0.5s`, `1.0s`
+  - lane grid follows the selected snap interval
 
 ### Evaluation
 
@@ -182,6 +188,11 @@ Sections are collapsible, and each section has a "Key" button that inserts keyfr
 6. Animation clip is included if it has any tracks
 7. JSON is written to `localStorage` under `motionforge_project`
 
+Recent/autosave persistence:
+- full recent payloads and autosave snapshot are stored in IndexedDB (`projectPayloadStore`)
+- localStorage keeps only lightweight recent metadata + user settings
+- legacy localStorage payload keys are migrated forward on startup
+
 ### Load
 
 1. JSON is parsed from localStorage (or from an imported file)
@@ -200,6 +211,17 @@ Sections are collapsible, and each section has a "Key" button that inserts keyfr
 - `downloadProjectJSON()` serializes the project and downloads `.json`.
 - `downloadProjectBundle()` exports a zip with `project.json` and embedded files under `assets/`.
 
+### Web-native file workflow
+
+- `Recent Projects` metadata is stored in localStorage (name, updatedAt, size, version, id) with a max of 5 entries.
+- Recent payload JSONs are resolved by `id` from IndexedDB.
+- Open/load actions use a dirty-state confirm guard before replacing the current scene.
+- Optional File System Access API mode (`Settings`) enables:
+  - `Open` via native file picker
+  - `Save` back to last opened/saved handle
+  - `Save As` to choose a new handle
+- Native file handles remain in memory only; persistent local metadata stores file name + timestamp.
+
 ### New project
 
 Same as load, but uses `createDefaultObjects()` to make the standard cube/sphere/cone. Animation, undo, and asset registry are reset.
@@ -212,19 +234,22 @@ Same as load, but uses `createDefaultObjects()` to make the standard cube/sphere
 2. File extension/size is validated (`.gltf/.glb`; warning threshold + hard max limit).
 3. File is read to `ArrayBuffer` with progress updates and cancel support.
 4. `GLTFLoader.parse()` creates a Three.js hierarchy.
-5. Imported nodes are annotated with:
+5. Import summary is computed (nodes, meshes, materials, textures) and checked against budget thresholds.
+6. Imported nodes are annotated with:
    - `__assetId`
    - `__isImportedModel`
    - `__assetNodePath`
    - `__isModelRoot` (root only)
-6. Scene store registers the hierarchy in one batched `objects` notification.
-7. Asset metadata + embedded bytes are stored in `assetStore`.
+7. Scene store registers the hierarchy in one batched `objects` notification.
+8. Asset metadata + embedded bytes are stored in `assetStore`.
+9. Users can run `Purge Unused` to remove assets not referenced by any model root.
 
 ### Failure states
 
 - Wrong file type: early rejection with toast.
 - Oversized file: blocked before load.
 - Broken glTF / missing external textures: toast error; scene remains unchanged.
+- Over-budget import (nodes/textures): rejected with readable error; current scene remains unchanged.
 - Cancel: aborts active import cleanly and preserves existing project state.
 
 ## Cleanup and Disposal
@@ -255,8 +280,9 @@ Shortcuts are bound via a `window.addEventListener("keydown", ...)` inside the v
 | F         | Frame selected object (or reset to origin)|
 | Shift+F   | Frame all selectable objects              |
 | G         | Toggle grid and axes visibility           |
+| Ctrl+K    | Open command palette                      |
 | Esc       | Cancel gizmo drag / clear selection       |
 | Delete    | Delete selected timeline keyframes        |
-| Ctrl+Wheel| Timeline zoom (when pointer is over timeline) |
+| Wheel     | Timeline zoom (when pointer is over timeline) |
 | Ctrl+Z    | Undo                                      |
 | Ctrl+Y    | Redo                                      |

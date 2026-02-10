@@ -1,100 +1,51 @@
 # MotionForge
 
-A production-grade web application for 3D animation and motion design, built with React, TypeScript, and Three.js.
+<p>
+  <img src="apps/web/public/motionforge-logo.svg" alt="MotionForge logo" width="96" height="96" />
+</p>
+
+MotionForge is a web-first 3D animation editor built with React, TypeScript, and Three.js. It combines scene editing, timeline keyframing, undo/redo, project persistence, glTF model import, and bundle export in a pnpm monorepo designed for production-quality iteration.
+
+## Demo Features
+
+- Three.js viewport with selection, transform gizmo, framing, and keyboard shortcuts.
+- Timeline v2 with multi-object lanes, keyframe selection/editing, copy/paste, nudge, and undo/redo.
+- Save/load/import/export workflow with project schema compatibility (`v1`/`v2`/`v3`).
+- glTF import with asset registry, material persistence, and bundle ZIP export.
+- Guardrails for invalid files and a strict `pnpm gate` quality pipeline.
 
 ## Quickstart
 
 ```bash
 pnpm install
-pnpm dev        # Start the development server
+pnpm -C apps/web dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open `http://localhost:5173`.
 
-## Commands
+## Demo In 60 Seconds
 
-| Command          | Description                                      |
-| ---------------- | ------------------------------------------------ |
-| `pnpm install`   | Install all dependencies                         |
-| `pnpm dev`       | Start the web app dev server                     |
-| `pnpm build`     | Build all packages and the web app               |
-| `pnpm lint`      | Run ESLint across the workspace                  |
-| `pnpm typecheck` | Run TypeScript type checking across all packages |
-| `pnpm test`      | Run all tests via Vitest                         |
-| `pnpm gate`      | Run lint, typecheck, test, and build in sequence |
+1. Click `Start Demo Project` on first run.
+2. Press `Space` to play animation.
+3. Drag one keyframe in the timeline and press `Ctrl+Z`.
+4. Click `Import Model` and choose a `.glb`.
+5. Click `Export Bundle` to download `project.json + assets`.
 
-## Controls
+## Key Docs
 
-### Mouse
+- Project format: [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md)
+- Release gate: [RELEASE_GATE.md](RELEASE_GATE.md)
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Deployment: [docs/DEPLOY.md](docs/DEPLOY.md)
+- Release process: [RELEASE.md](RELEASE.md)
 
-- **Orbit:** Left mouse drag
-- **Pan:** Right mouse drag
-- **Zoom:** Scroll wheel
-- **Select:** Left click on an object (viewport or hierarchy)
-- **Deselect:** Left click on empty space or press Esc
-- **Rename:** Double-click an item in the hierarchy panel
+## Roadmap (Short)
 
-### Keyboard Shortcuts
+- Better graph/curve editing and interpolation UX.
+- More import/export targets and non-destructive asset relinking.
+- Collaboration and review workflows for teams.
 
-| Key       | Action                                    |
-| --------- | ----------------------------------------- |
-| `W`       | Translate mode                            |
-| `E`       | Rotate mode                               |
-| `R`       | Scale mode                                |
-| `K`       | Insert keyframe (all properties)          |
-| `Delete`  | Delete selected keyframes in timeline     |
-| `Space`   | Play / pause animation                    |
-| `F`       | Frame selected object (or reset to origin)|
-| `Shift+F` | Frame all objects                         |
-| `G`       | Toggle grid and axes                      |
-| `Esc`     | Cancel gizmo drag / clear selection       |
-| `Ctrl+Z`  | Undo                                      |
-| `Ctrl+Y`  | Redo                                      |
+## Contributing
 
-## Animation
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
-1. Select an object and position it at frame 0
-2. Press `K` or click a "Key" button in the Inspector to record keyframes (undoable)
-3. Scrub the timeline to a later time, move the object, press `K` again
-4. Press `Space` to play back the animation
-5. Use timeline track rows to select, drag, delete, and edit keyframes
-6. Adjust duration and zoom in the timeline panel
-
-Keyframe markers appear per track row (`Position`, `Rotation`, `Scale`) and support multi-select (`Shift`).
-
-## Save and Load
-
-- **Save:** Click "Save" in the top bar to persist the project to localStorage.
-- **Load:** Click "Load" to restore the last saved project.
-- **Import:** Click "Import" to load a `.json` project file from disk.
-- Invalid imports are rejected with a readable error and do not overwrite the current project.
-- **Export:** Click "Export" to download the project as a `.json` file.
-- **New:** Click "New" to reset to default objects.
-
-An "Unsaved" badge appears in the top bar when you have changes that have not been saved yet. See [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md) for the JSON schema (v2 with animation data, backward compatible with v1).
-
-## Repo Layout
-
-```
-motionforge/
-  apps/
-    web/              # Vite + React + Three.js application
-  packages/
-    engine/           # Shared animation engine library
-    ui/               # Shared UI components (React)
-  docs/
-    ARCHITECTURE.md   # Viewport, gizmo, stores, animation, and disposal design
-    PROJECT_FORMAT.md # Project JSON schema (v2)
-  eslint.config.js    # ESLint flat config
-  tsconfig.base.json  # Shared TypeScript settings
-  pnpm-workspace.yaml # Workspace definition
-```
-
-## Phase Roadmap
-
-- **Phase 0** (done): Project scaffolding, tooling gates, basic 3D viewport with placeholder layout
-- **Phase 1** (done): Viewport reliability, selection MVP, keyboard shortcuts, UI polish
-- **Phase 2** (done): Live scene store, editable inspector, hierarchy wiring, save/load
-- **Phase 3** (done): Transform gizmos, keyframe animation, timeline UI, undo/redo, project format v2
-- **Phase 4** (done): Timeline v2 track rows, keyframe CRUD + undo, axis-locked rotation gizmo, gizmo auto-scale
-- **Phase 5**: Plugin system, collaboration features

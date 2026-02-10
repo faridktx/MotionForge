@@ -30,6 +30,11 @@ interface DragState {
   maxTime: number;
 }
 
+interface PanState {
+  startClientX: number;
+  startScrollLeft: number;
+}
+
 interface MarqueeRect {
   left: number;
   top: number;
@@ -135,6 +140,30 @@ function useTimelinePixelsPerSecond(): number {
   return value;
 }
 
+function useTimelineSnapSeconds(): number {
+  const [value, setValue] = useState(() => timelineStore.getSnapSeconds());
+
+  useEffect(() => {
+    return timelineStore.subscribe(() => {
+      setValue(timelineStore.getSnapSeconds());
+    });
+  }, []);
+
+  return value;
+}
+
+function useTimelinePanOffset(): number {
+  const [value, setValue] = useState(() => timelineStore.getPanOffsetPx());
+
+  useEffect(() => {
+    return timelineStore.subscribe(() => {
+      setValue(timelineStore.getPanOffsetPx());
+    });
+  }, []);
+
+  return value;
+}
+
 function useSelectedKeyframes(): SelectedKeyframe[] {
   const [selected, setSelected] = useState(() => keyframeSelectionStore.getSelected());
 
@@ -153,7 +182,8 @@ export function TimelineV2() {
   const { playing, currentTime, duration } = usePlaybackState();
   const keyframeRevision = useKeyframeRevision();
   const pixelsPerSecond = useTimelinePixelsPerSecond();
-  const snapSeconds = timelineStore.getSnapSeconds();
+  const snapSeconds = useTimelineSnapSeconds();
+  const panOffsetPx = useTimelinePanOffset();
   const selectedKeyframes = useSelectedKeyframes();
 
   const selectedTokenSet = useMemo(
@@ -165,6 +195,7 @@ export function TimelineV2() {
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
 
   const dragStateRef = useRef<DragState | null>(null);
+  const panStateRef = useRef<PanState | null>(null);
   const previewDeltaRef = useRef(0);
   const clipboardRef = useRef<KeyframeRecord[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -172,6 +203,13 @@ export function TimelineV2() {
   useEffect(() => {
     keyframeSelectionStore.clear();
   }, [selectedId]);
+
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+    if (Math.abs(scroll.scrollLeft - panOffsetPx) < 1) return;
+    scroll.scrollLeft = panOffsetPx;
+  }, [panOffsetPx]);
 
   const timelineRows = useMemo(() => {
     void keyframeRevision;
@@ -314,30 +352,54 @@ export function TimelineV2() {
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
       event.preventDefault();
+      const scroll = scrollRef.current;
+      if (!scroll) return;
 
       const startX = event.clientX;
       const startY = event.clientY;
+      const useMarquee = event.shiftKey;
       let marqueeActive = false;
+      let panActive = false;
+      panStateRef.current = {
+        startClientX: startX,
+        startScrollLeft: scroll.scrollLeft,
+      };
 
       const onMove = (moveEvent: PointerEvent) => {
         const dx = moveEvent.clientX - startX;
         const dy = moveEvent.clientY - startY;
-        if (!marqueeActive && dx * dx + dy * dy > 16) {
-          marqueeActive = true;
+        const distanceSquared = dx * dx + dy * dy;
+        if (useMarquee) {
+          if (!marqueeActive && distanceSquared > 16) {
+            marqueeActive = true;
+          }
+        } else if (!panActive && distanceSquared > 16 && Math.abs(dx) >= Math.abs(dy)) {
+          panActive = true;
         }
+
         if (marqueeActive) {
           updateMarqueeSelection(startX, startY, moveEvent.clientX, moveEvent.clientY);
+          return;
+        }
+
+        if (panActive && panStateRef.current) {
+          const nextScrollLeft = panStateRef.current.startScrollLeft - dx;
+          scroll.scrollLeft = Math.max(0, nextScrollLeft);
+          timelineStore.setPanOffsetPx(scroll.scrollLeft);
         }
       };
 
       const onUp = (upEvent: PointerEvent) => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        panStateRef.current = null;
 
         if (marqueeActive) {
           setMarqueeRect(null);
-        } else {
+        } else if (!panActive) {
           startScrub(upEvent.clientX);
+        } else {
+          timelineStore.setPanOffsetPx(scroll.scrollLeft);
         }
       };
 
@@ -484,9 +546,30 @@ export function TimelineV2() {
   }, []);
 
   const onTimelineWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!event.ctrlKey) return;
-    event.preventDefault();
-    timelineStore.zoomByFactor(event.deltaY < 0 ? 1.1 : 0.9);
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+
+    const absY = Math.abs(event.deltaY);
+    const absX = Math.abs(event.deltaX);
+    if (absY >= absX) {
+      event.preventDefault();
+      const rect = scroll.getBoundingClientRect();
+      const anchorPx = event.clientX - rect.left + scroll.scrollLeft;
+      const previousPixelsPerSecond = timelineStore.getPixelsPerSecond();
+      const anchorTime = anchorPx / previousPixelsPerSecond;
+
+      timelineStore.zoomByFactor(event.deltaY < 0 ? 1.1 : 0.9);
+      const nextPixelsPerSecond = timelineStore.getPixelsPerSecond();
+      const nextScrollLeft = Math.max(0, anchorTime * nextPixelsPerSecond - (event.clientX - rect.left));
+      scroll.scrollLeft = nextScrollLeft;
+      timelineStore.setPanOffsetPx(scroll.scrollLeft);
+      return;
+    }
+
+    if (absX > 0) {
+      scroll.scrollLeft = Math.max(0, scroll.scrollLeft + event.deltaX);
+      timelineStore.setPanOffsetPx(scroll.scrollLeft);
+    }
   }, []);
 
   const commitEditorTime = useCallback((value: string) => {
@@ -617,6 +700,7 @@ export function TimelineV2() {
   }
 
   const { minPixelsPerSecond, maxPixelsPerSecond } = timelineStore.getBounds();
+  const snapPresets = timelineStore.getSnapPresets();
   const playheadLeftPx = currentTime * pixelsPerSecond;
 
   return (
@@ -661,6 +745,20 @@ export function TimelineV2() {
           />
         </label>
 
+        <label className="timeline-v2-snap-control">
+          Snap
+          <select
+            value={snapSeconds}
+            onChange={(event) => timelineStore.setSnapSeconds(parseFloat(event.target.value))}
+          >
+            {snapPresets.map((preset) => (
+              <option key={preset} value={preset}>
+                {preset === 0 ? "Off" : `${preset.toFixed(1)}s`}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <button
           type="button"
           className="timeline-v2-delete-btn"
@@ -676,7 +774,7 @@ export function TimelineV2() {
           </svg>
         </button>
 
-        <span className="timeline-v2-shortcuts">K key all · Del remove · Ctrl+C/V copy/paste · Alt+Arrows nudge · Ctrl+Wheel zoom</span>
+        <span className="timeline-v2-shortcuts">K key all · Shift+Drag marquee · Drag background pan · Wheel zoom · Del remove · Ctrl+C/V copy/paste · Alt+Arrows nudge</span>
       </div>
 
       {selectedSingleKey && (
@@ -743,7 +841,13 @@ export function TimelineV2() {
         />
 
         <div className="timeline-v2-right" onWheel={onTimelineWheel}>
-          <div className="timeline-v2-scroll" ref={scrollRef}>
+          <div
+            className="timeline-v2-scroll"
+            ref={scrollRef}
+            onScroll={(event) => {
+              timelineStore.setPanOffsetPx(event.currentTarget.scrollLeft);
+            }}
+          >
             <div className="timeline-v2-scroll-content" style={{ width: `${timelineWidthPx}px` }}>
               <div className="timeline-v2-ruler" onPointerDown={onLanePointerDown}>
                 {rulerTicks.map((tickTime) => {
@@ -767,6 +871,7 @@ export function TimelineV2() {
                     laneId={row.id}
                     widthPx={timelineWidthPx}
                     pixelsPerSecond={pixelsPerSecond}
+                    snapSeconds={snapSeconds}
                     markers={rowMarkers.get(row.id) ?? []}
                     selectedTokens={selectedTokenSet}
                     previewDeltaSeconds={previewDeltaSeconds}

@@ -9,6 +9,7 @@ interface TrackLaneProps {
   laneId: string;
   widthPx: number;
   pixelsPerSecond: number;
+  snapSeconds: number;
   markers: TrackLaneMarker[];
   selectedTokens: Set<string>;
   previewDeltaSeconds: number;
@@ -25,6 +26,7 @@ export function TrackLane({
   laneId,
   widthPx,
   pixelsPerSecond,
+  snapSeconds,
   markers,
   selectedTokens,
   previewDeltaSeconds,
@@ -32,9 +34,17 @@ export function TrackLane({
   onLanePointerDown,
   onKeyPointerDown,
 }: TrackLaneProps) {
+  const laneStyle = snapSeconds > 0
+    ? {
+      width: `${widthPx}px`,
+      backgroundImage: "linear-gradient(to right, rgba(120, 120, 120, 0.14) 1px, transparent 1px)",
+      backgroundSize: `${Math.max(2, snapSeconds * pixelsPerSecond)}px 100%`,
+    }
+    : { width: `${widthPx}px` };
+
   return (
     <div className="timeline-v2-lane" onPointerDown={onLanePointerDown} data-lane-id={laneId}>
-      <div className="timeline-v2-lane-inner" style={{ width: `${widthPx}px` }}>
+      <div className="timeline-v2-lane-inner" style={laneStyle}>
         {markers.map((marker, index) => {
           const token = makeToken(marker);
           const isSelected = selectedTokens.has(token);

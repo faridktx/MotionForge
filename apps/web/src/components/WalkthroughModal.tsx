@@ -3,9 +3,10 @@ import { useEffect, useRef } from "react";
 interface WalkthroughModalProps {
   open: boolean;
   onClose: () => void;
+  onResetDemo?: () => void;
 }
 
-export function WalkthroughModal({ open, onClose }: WalkthroughModalProps) {
+export function WalkthroughModal({ open, onClose, onResetDemo }: WalkthroughModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -97,6 +98,15 @@ export function WalkthroughModal({ open, onClose }: WalkthroughModalProps) {
               <li><b>Playback does nothing:</b> add at least two keys with different values/times, then press Space.</li>
             </ul>
           </section>
+
+          {onResetDemo && (
+            <section className="modal-section">
+              <h3>Demo</h3>
+              <button className="topbar-btn topbar-btn--primary" onClick={onResetDemo}>
+                Reset Demo
+              </button>
+            </section>
+          )}
         </div>
       </div>
     </div>

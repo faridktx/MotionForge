@@ -5,6 +5,20 @@ import type { AssetRecord, MaterialOverrideRecord } from "../../state/assetStore
 
 export const WARN_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 export const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+export const MAX_IMPORT_NODES = 2500;
+export const MAX_IMPORT_TEXTURES = 256;
+
+export interface ImportSceneSummary {
+  nodes: number;
+  meshes: number;
+  materials: number;
+  textures: number;
+}
+
+interface ImportBudget {
+  maxNodes?: number;
+  maxTextures?: number;
+}
 
 interface ReadFileOptions {
   onProgress?: (loaded: number, total: number) => void;
@@ -136,6 +150,75 @@ function firstMaterial(mesh: THREE.Mesh): THREE.Material | null {
   const material = mesh.material;
   if (Array.isArray(material)) return material[0] ?? null;
   return material ?? null;
+}
+
+function collectTexturesFromMaterial(material: THREE.Material, out: Set<THREE.Texture>): void {
+  const candidate = material as {
+    map?: THREE.Texture | null;
+    normalMap?: THREE.Texture | null;
+    roughnessMap?: THREE.Texture | null;
+    metalnessMap?: THREE.Texture | null;
+    emissiveMap?: THREE.Texture | null;
+    aoMap?: THREE.Texture | null;
+    alphaMap?: THREE.Texture | null;
+    bumpMap?: THREE.Texture | null;
+    displacementMap?: THREE.Texture | null;
+  };
+  const keys: (keyof typeof candidate)[] = [
+    "map",
+    "normalMap",
+    "roughnessMap",
+    "metalnessMap",
+    "emissiveMap",
+    "aoMap",
+    "alphaMap",
+    "bumpMap",
+    "displacementMap",
+  ];
+  for (const key of keys) {
+    const texture = candidate[key];
+    if (texture instanceof THREE.Texture) {
+      out.add(texture);
+    }
+  }
+}
+
+export function summarizeImportedScene(root: THREE.Object3D): ImportSceneSummary {
+  let nodes = 0;
+  let meshes = 0;
+  const materialSet = new Set<THREE.Material>();
+  const textureSet = new Set<THREE.Texture>();
+
+  root.traverse((node) => {
+    nodes += 1;
+    if (!(node instanceof THREE.Mesh)) return;
+    meshes += 1;
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+    for (const material of materials) {
+      if (!(material instanceof THREE.Material)) continue;
+      materialSet.add(material);
+      collectTexturesFromMaterial(material, textureSet);
+    }
+  });
+
+  return {
+    nodes,
+    meshes,
+    materials: materialSet.size,
+    textures: textureSet.size,
+  };
+}
+
+export function validateImportBudget(summary: ImportSceneSummary, budget: ImportBudget = {}): string | null {
+  const maxNodes = budget.maxNodes ?? MAX_IMPORT_NODES;
+  const maxTextures = budget.maxTextures ?? MAX_IMPORT_TEXTURES;
+  if (summary.nodes > maxNodes) {
+    return `Import exceeds node budget (${summary.nodes}/${maxNodes}).`;
+  }
+  if (summary.textures > maxTextures) {
+    return `Import exceeds texture budget (${summary.textures}/${maxTextures}).`;
+  }
+  return null;
 }
 
 export function collectMaterialOverrides(root: THREE.Object3D): MaterialOverrideRecord[] {

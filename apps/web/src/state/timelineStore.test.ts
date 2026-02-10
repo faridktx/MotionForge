@@ -4,6 +4,8 @@ import { timelineStore } from "./timelineStore.js";
 describe("timelineStore object UI state", () => {
   beforeEach(() => {
     timelineStore.clearObjectUiState();
+    timelineStore.setSnapSeconds(0.1);
+    timelineStore.setPanOffsetPx(0);
   });
 
   it("defaults non-selected objects to collapsed and selected to expanded", () => {
@@ -29,5 +31,26 @@ describe("timelineStore object UI state", () => {
     expect(timelineStore.isObjectHidden("obj_1")).toBe(true);
     timelineStore.toggleObjectHidden("obj_1");
     expect(timelineStore.isObjectHidden("obj_1")).toBe(false);
+  });
+
+  it("supports snap grid presets including off", () => {
+    expect(timelineStore.getSnapSeconds()).toBe(0.1);
+    timelineStore.setSnapSeconds(0.5);
+    expect(timelineStore.getSnapSeconds()).toBe(0.5);
+
+    timelineStore.setSnapSeconds(1);
+    expect(timelineStore.getSnapSeconds()).toBe(1);
+
+    timelineStore.setSnapSeconds(0);
+    expect(timelineStore.getSnapSeconds()).toBe(0);
+  });
+
+  it("tracks pan offset and clamps to zero when panning left past origin", () => {
+    expect(timelineStore.getPanOffsetPx()).toBe(0);
+    timelineStore.panBy(120);
+    expect(timelineStore.getPanOffsetPx()).toBe(120);
+
+    timelineStore.panBy(-500);
+    expect(timelineStore.getPanOffsetPx()).toBe(0);
   });
 });

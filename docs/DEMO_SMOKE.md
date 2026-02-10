@@ -10,6 +10,18 @@ Use this script before demos or recordings. It validates the core editor loop en
 
 ## Script
 
+### 0) First-run onboarding (45s)
+
+1. Clear `localStorage` for the app origin.
+2. Reload app.
+3. Confirm onboarding modal appears with:
+   - `Start Demo Project`
+   - `Watch Controls`
+   - `Open Project`
+4. Click `Start Demo Project`.
+
+Expected: deterministic demo project loads with animated cube and timeline keys.
+
 ### 1) Atomic key insert undo/redo (90s)
 
 1. Select `Cube` in Hierarchy.
@@ -46,6 +58,16 @@ Expected: hidden object tracks are removed from lane view (UI only, animation da
 3. Click a key marker in an axis lane.
 
 Expected: selection corresponds to that exact axis lane keyframe.
+
+### 2d) Timeline zoom/pan/snap grid (60s)
+
+1. In timeline controls, change `Snap` from `0.1s` to `0.5s`.
+2. Drag a selected keyframe and confirm movement snaps to 0.5-second increments.
+3. Set `Snap` to `Off` and drag again.
+4. Drag empty timeline background horizontally to pan.
+5. Use mouse wheel over timeline to zoom in/out.
+
+Expected: snap presets affect drag precision, background drag pans, and wheel zoom changes timeline scale smoothly.
 
 ### 3) Delete keyframe undo/redo (60s)
 
@@ -109,6 +131,14 @@ Expected: scene + keyframes are restored both by Load and Import.
 
 Expected: imported model and edited material values persist after load; bundle zip downloads with `project.json` and `assets/*`.
 
+### 5c) Asset purge and renderer stats overlay (60s)
+
+1. Open `Settings` and enable `Show renderer stats overlay (dev)`.
+2. Confirm draw calls/geometries/textures appear in the viewport corner.
+3. Use `Purge Unused` from Settings.
+
+Expected: overlay updates live; purge reports whether unused assets were removed without breaking scene content.
+
 ### 6) Rotation axis lock consistency (90s)
 
 1. Press `E` (rotate mode).
@@ -132,6 +162,24 @@ Expected: gizmo remains readable; handle size scales with camera distance.
 3. Click `Save`.
 
 Expected: `Unsaved` appears after edit and clears after successful save.
+
+### 9) Recent/Open/Save As workflow (60s)
+
+1. Save project at least twice after making edits.
+2. Click `Recent` and confirm entries include name/version/size/time.
+3. Click one recent entry to open it.
+4. Click `Settings` and enable native file access if supported, then test `Open` and `Save As`.
+
+Expected: recent list opens projects; unsupported browsers show fallback note; native mode falls back gracefully when unavailable.
+
+### 10) Command palette workflow (45s)
+
+1. Press `Ctrl+K`.
+2. Search for `Frame`.
+3. Press `Enter` to execute `Frame Selected`.
+4. Reopen palette and run `Toggle Grid`.
+
+Expected: command palette opens quickly, keyboard navigation works, and actions match viewport/editor behavior.
 
 ## Known Failure Symptoms
 

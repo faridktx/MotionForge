@@ -159,10 +159,16 @@ Keyframes:
 ## Storage and export
 
 - Local save: `localStorage` key `motionforge_project`.
+- Recent project payloads: IndexedDB database `motionforge_project_payloads` (keyed by recent entry `id`).
+- Recent project metadata list: `localStorage` key `motionforge_recent_projects_v1`.
+- Autosave snapshot: IndexedDB slot `autosave`.
 - JSON export: single file (`motionforge-project.json`).
 - Bundle export: zip (`motionforge-bundle.zip`) with:
   - `project.json`
   - `assets/*` (embedded asset bytes when available)
+
+Legacy compatibility:
+- Older localStorage recent payload entries are migrated on first run into IndexedDB, then legacy payload keys are cleaned up.
 
 ## Validation
 

@@ -5,9 +5,18 @@ import type { Clip } from "@motionforge/engine";
 import { validateProjectDataDetailed } from "@motionforge/engine";
 import { collectMaterialOverrides, base64ToArrayBuffer } from "../three/importGltf.js";
 import { strToU8, zipSync } from "fflate";
+import {
+  AUTOSAVE_SLOT_ID,
+  deletePayloadFromIndexedDb,
+  loadPayloadFromIndexedDb,
+  savePayloadToIndexedDb,
+} from "./projectPayloadStore.js";
 
 export const PROJECT_VERSION = 3;
 const STORAGE_KEY = "motionforge_project";
+const RECENT_INDEX_KEY = "motionforge_recent_projects_v1";
+const RECENT_ITEM_PREFIX = "motionforge_recent_item_"; // legacy payload prefix (localStorage)
+const MAX_RECENT_PROJECTS = 5;
 
 export interface ProjectObjectData {
   id: string;
@@ -49,6 +58,15 @@ export interface ProjectData {
 export interface ParseProjectResult {
   data: ProjectData | null;
   error: string | null;
+}
+
+export interface RecentProjectEntry {
+  id: string;
+  name: string;
+  updatedAt: string;
+  size: number;
+  version: number;
+  legacyStorageKey?: string;
 }
 
 function detectGeometryType(obj: THREE.Mesh): "box" | "sphere" | "cone" | null {
@@ -139,18 +157,191 @@ export function serializeProject(): ProjectData {
   return data;
 }
 
-export function saveToLocalStorage(): boolean {
+function summarizeProjectName(data: ProjectData): string {
+  if (data.objects.length > 0) {
+    return data.objects[0].name || "Untitled Project";
+  }
+  if (data.modelInstances && data.modelInstances.length > 0) {
+    return data.modelInstances[0].name || "Untitled Project";
+  }
+  return "Untitled Project";
+}
+
+function parseRecentIndex(raw: string | null): RecentProjectEntry[] {
+  if (!raw) return [];
   try {
-    const data = serializeProject();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const entries: RecentProjectEntry[] = [];
+    for (const item of parsed) {
+      if (typeof item !== "object" || item === null) continue;
+      const record = item as Record<string, unknown>;
+      const legacyStorageKey = typeof record.storageKey === "string" ? record.storageKey : undefined;
+      const id = typeof record.id === "string"
+        ? record.id
+        : legacyStorageKey
+          ? legacyStorageKey.replace(RECENT_ITEM_PREFIX, "")
+          : null;
+      const name = typeof record.name === "string" ? record.name : null;
+      const updatedAt = typeof record.updatedAt === "string"
+        ? record.updatedAt
+        : typeof record.timestamp === "string"
+          ? record.timestamp
+          : null;
+      const size = typeof record.size === "number" ? record.size : null;
+      const version = typeof record.version === "number" ? record.version : null;
+      if (!id || !name || !updatedAt || size === null || version === null) continue;
+      entries.push({
+        id,
+        name,
+        updatedAt,
+        size,
+        version,
+        legacyStorageKey,
+      });
+    }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+export function getRecentProjects(): RecentProjectEntry[] {
+  return parseRecentIndex(localStorage.getItem(RECENT_INDEX_KEY)).sort(
+    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
+  );
+}
+
+function setRecentProjects(items: RecentProjectEntry[]) {
+  localStorage.setItem(RECENT_INDEX_KEY, JSON.stringify(items));
+}
+
+export function recordRecentProject(data: ProjectData, json: string, customName?: string): void {
+  void persistRecentProject(data, json, customName);
+}
+
+export async function saveAutosaveSnapshot(customJson?: string): Promise<boolean> {
+  try {
+    const json = customJson ?? JSON.stringify(serializeProject());
+    await savePayloadToIndexedDb(AUTOSAVE_SLOT_ID, json);
     return true;
   } catch {
     return false;
   }
 }
 
-export function saveProject(): boolean {
-  const saved = saveToLocalStorage();
+export async function loadAutosaveSnapshot(): Promise<ParseProjectResult> {
+  try {
+    const json = await loadPayloadFromIndexedDb(AUTOSAVE_SLOT_ID);
+    if (!json) {
+      return { data: null, error: "No autosave snapshot available." };
+    }
+    return parseProjectJSONResult(json);
+  } catch {
+    return { data: null, error: "Failed to read autosave snapshot." };
+  }
+}
+
+export async function persistRecentProject(data: ProjectData, json: string, customName?: string): Promise<void> {
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  await savePayloadToIndexedDb(id, json);
+
+  const entry: RecentProjectEntry = {
+    id,
+    name: customName ?? summarizeProjectName(data),
+    updatedAt: new Date().toISOString(),
+    size: json.length,
+    version: data.version,
+  };
+
+  const current = getRecentProjects();
+  const next = [entry, ...current].slice(0, MAX_RECENT_PROJECTS);
+  const nextIds = new Set(next.map((item) => item.id));
+  for (const prev of current) {
+    if (!nextIds.has(prev.id)) {
+      await deletePayloadFromIndexedDb(prev.id);
+      if (prev.legacyStorageKey) {
+        localStorage.removeItem(prev.legacyStorageKey);
+      }
+    }
+  }
+  setRecentProjects(next);
+}
+
+export async function loadRecentProject(id: string): Promise<ParseProjectResult> {
+  const entry = getRecentProjects().find((item) => item.id === id);
+  if (!entry) {
+    return { data: null, error: "Recent project entry is not available." };
+  }
+
+  const fromIndexedDb = await loadPayloadFromIndexedDb(id);
+  if (fromIndexedDb) {
+    return parseProjectJSONResult(fromIndexedDb);
+  }
+
+  if (entry.legacyStorageKey) {
+    const legacy = localStorage.getItem(entry.legacyStorageKey);
+    if (legacy) {
+      return parseProjectJSONResult(legacy);
+    }
+  }
+
+  return { data: null, error: "Recent project payload is no longer available." };
+}
+
+export async function migrateLegacyRecentPayloads(): Promise<number> {
+  const entries = getRecentProjects();
+  if (entries.length === 0) return 0;
+
+  let migrated = 0;
+  const normalized: RecentProjectEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.legacyStorageKey) {
+      normalized.push(entry);
+      continue;
+    }
+
+    const legacyJson = localStorage.getItem(entry.legacyStorageKey);
+    if (!legacyJson) {
+      normalized.push({ ...entry, legacyStorageKey: undefined });
+      continue;
+    }
+
+    const parsed = parseProjectJSONResult(legacyJson);
+    if (!parsed.data) {
+      localStorage.removeItem(entry.legacyStorageKey);
+      continue;
+    }
+
+    await savePayloadToIndexedDb(entry.id, legacyJson);
+    localStorage.removeItem(entry.legacyStorageKey);
+    normalized.push({
+      ...entry,
+      version: parsed.data.version,
+      size: legacyJson.length,
+      legacyStorageKey: undefined,
+    });
+    migrated += 1;
+  }
+
+  setRecentProjects(normalized.slice(0, MAX_RECENT_PROJECTS));
+  return migrated;
+}
+
+export async function saveToLocalStorage(): Promise<boolean> {
+  try {
+    const data = serializeProject();
+    const json = JSON.stringify(data);
+    localStorage.setItem(STORAGE_KEY, json);
+    await persistRecentProject(data, json);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function saveProject(): Promise<boolean> {
+  const saved = await saveToLocalStorage();
   if (saved) {
     sceneStore.clearDirty();
   }
@@ -208,13 +399,14 @@ export function downloadProjectBundle(): void {
   bundleFiles["project.json"] = strToU8(JSON.stringify(data, null, 2));
 
   if (data.assets) {
-    for (const asset of data.assets) {
+    const sortedAssets = [...data.assets].sort((a, b) => a.id.localeCompare(b.id));
+    for (const asset of sortedAssets) {
+      const baseName = sanitizeBundleFileName(asset.source.mode === "embedded" ? asset.source.fileName : asset.name);
+      const deterministicName = `${sanitizeBundleFileName(asset.id)}-${baseName || "asset.bin"}`;
       if (asset.source.mode === "embedded") {
-        const fileName = sanitizeBundleFileName(asset.source.fileName || asset.name || `${asset.id}.bin`);
-        bundleFiles[`assets/${fileName}`] = new Uint8Array(base64ToArrayBuffer(asset.source.data));
+        bundleFiles[`assets/${deterministicName}`] = new Uint8Array(base64ToArrayBuffer(asset.source.data));
       } else {
-        const manifestName = sanitizeBundleFileName(asset.name || `${asset.id}.txt`);
-        bundleFiles[`assets/${manifestName}.external.txt`] = strToU8(
+        bundleFiles[`assets/${deterministicName}.external.txt`] = strToU8(
           `External asset reference: ${asset.source.path}`,
         );
       }

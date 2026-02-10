@@ -1,0 +1,57 @@
+name: Release Artifact
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Gate
+        run: pnpm gate
+
+      - name: Build web app
+        run: pnpm -C apps/web build
+
+      - name: Write version metadata
+        run: |
+          cat > apps/web/dist/version-metadata.json <<EOF
+          {
+            "tag": "${GITHUB_REF_NAME}",
+            "commit": "${GITHUB_SHA}",
+            "builtAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+
+      - name: Zip dist artifact
+        run: |
+          mkdir -p out
+          cd apps/web/dist
+          zip -r ../../../out/motionforge-web-${GITHUB_REF_NAME}.zip .
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: motionforge-web-${{ github.ref_name }}
+          path: out/motionforge-web-${{ github.ref_name }}.zip
+

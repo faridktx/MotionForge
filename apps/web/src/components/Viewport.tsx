@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { disposeObject } from "../lib/three/disposeObject.js";
@@ -8,6 +8,7 @@ import { Gizmo, type GizmoMode } from "../lib/three/gizmo/Gizmo.js";
 import { sceneStore } from "../state/sceneStore.js";
 import { undoStore } from "../state/undoStore.js";
 import { animationStore } from "../state/animationStore.js";
+import { rendererStatsStore } from "../state/rendererStatsStore.js";
 import { createDefaultObjects } from "../lib/project/deserialize.js";
 
 interface ViewportProps {
@@ -17,8 +18,26 @@ interface ViewportProps {
 const HIGHLIGHT_EMISSIVE = new THREE.Color(0x335599);
 const DEFAULT_EMISSIVE = new THREE.Color(0x000000);
 
+interface RendererStatsSnapshot {
+  drawCalls: number;
+  geometries: number;
+  textures: number;
+}
+
 export function Viewport({ onModeChange }: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [statsEnabled, setStatsEnabled] = useState(() => rendererStatsStore.getEnabled());
+  const [stats, setStats] = useState<RendererStatsSnapshot>({
+    drawCalls: 0,
+    geometries: 0,
+    textures: 0,
+  });
+
+  useEffect(() => {
+    return rendererStatsStore.subscribe(() => {
+      setStatsEnabled(rendererStatsStore.getEnabled());
+    });
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -361,9 +380,26 @@ export function Viewport({ onModeChange }: ViewportProps) {
     }
     animate();
 
+    const statsTimer = window.setInterval(() => {
+      if (!rendererStatsStore.getEnabled()) return;
+      const next: RendererStatsSnapshot = {
+        drawCalls: renderer.info.render.calls,
+        geometries: renderer.info.memory.geometries,
+        textures: renderer.info.memory.textures,
+      };
+      setStats((prev) => (
+        prev.drawCalls === next.drawCalls &&
+        prev.geometries === next.geometries &&
+        prev.textures === next.textures
+          ? prev
+          : next
+      ));
+    }, 500);
+
     // -- Cleanup --
     return () => {
       cancelAnimationFrame(frameId);
+      window.clearInterval(statsTimer);
       observer.disconnect();
       unsubSelection();
       unsubTransform();
@@ -382,5 +418,16 @@ export function Viewport({ onModeChange }: ViewportProps) {
     };
   }, [onModeChange]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <div className="viewport-root">
+      <div ref={containerRef} className="viewport-canvas-host" />
+      {statsEnabled && (
+        <div className="viewport-stats" aria-label="Renderer stats overlay">
+          <div>Draw Calls: {stats.drawCalls}</div>
+          <div>Geometries: {stats.geometries}</div>
+          <div>Textures: {stats.textures}</div>
+        </div>
+      )}
+    </div>
+  );
 }
