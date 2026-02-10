@@ -5,7 +5,7 @@ export function createEngineVersion(): string {
 export { framingDistance } from "./cameraFraming.js";
 export { degToRad, radToDeg } from "./conversion.js";
 export { validateProjectData, validateProjectDataDetailed } from "./projectSchema.js";
-export type { ProjectSchema, ProjectObjectSchema } from "./projectSchema.js";
+export type { ProjectSchema, ProjectObjectSchema, ProjectAssetSchema, ProjectModelInstanceSchema } from "./projectSchema.js";
 export type { ProjectValidationResult } from "./projectSchema.js";
 
 // Animation

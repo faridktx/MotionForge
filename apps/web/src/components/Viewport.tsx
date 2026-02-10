@@ -207,13 +207,14 @@ export function Viewport({ onModeChange }: ViewportProps) {
         return;
       }
       const obj = sceneStore.getObjectById(selId);
-      if (obj instanceof THREE.Mesh) {
-        setHighlight(obj);
-        gizmo.attach(obj);
-      } else {
+      if (!obj) {
         setHighlight(null);
         gizmo.detach();
+        return;
       }
+      if (obj instanceof THREE.Mesh) setHighlight(obj);
+      else setHighlight(null);
+      gizmo.attach(obj);
     }
 
     const unsubSelection = sceneStore.subscribe("selection", syncHighlightToStore);

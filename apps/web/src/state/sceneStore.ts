@@ -81,12 +81,28 @@ export const sceneStore = {
 
   // -- Object registry --
 
-  registerObject(obj: THREE.Object3D, id?: string): string {
+  registerObject(obj: THREE.Object3D, id?: string, options?: { silent?: boolean }): string {
     const objId = id ?? generateId();
     obj.userData.__sceneId = objId;
     registry.set(objId, obj);
-    notify("objects");
+    if (!options?.silent) {
+      notify("objects");
+    }
     return objId;
+  },
+
+  registerHierarchy(root: THREE.Object3D, options?: { markDirty?: boolean; rootId?: string }): string[] {
+    const ids: string[] = [];
+    root.traverse((node) => {
+      const preferredId = node === root ? options?.rootId : undefined;
+      const id = this.registerObject(node, preferredId, { silent: true });
+      ids.push(id);
+    });
+    notify("objects");
+    if (options?.markDirty) {
+      markDirty();
+    }
+    return ids;
   },
 
   unregisterObject(id: string) {

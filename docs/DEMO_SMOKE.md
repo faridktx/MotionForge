@@ -99,6 +99,16 @@ Expected: interpolation changes are undoable and playback curve reflects selecte
 
 Expected: scene + keyframes are restored both by Load and Import.
 
+### 5b) glTF model import + bundle export (120s)
+
+1. Click `Import Model` and choose a small `.glb` file.
+2. Confirm imported model appears in Hierarchy and viewport.
+3. Select one imported mesh and adjust material `Base Color`, `Metallic`, `Roughness` in Inspector.
+4. Click `Export Bundle`.
+5. Click `Save`, refresh tab, then `Load`.
+
+Expected: imported model and edited material values persist after load; bundle zip downloads with `project.json` and `assets/*`.
+
 ### 6) Rotation axis lock consistency (90s)
 
 1. Press `E` (rotate mode).
@@ -146,3 +156,9 @@ Expected: `Unsaved` appears after edit and clears after successful save.
 8. Playback appears static:
    - Confirm there are at least two keyframes at different times/values.
    - Verify playhead moves and `Space` toggles playback.
+9. Model import fails for `.gltf`:
+   - Confirm referenced textures/buffers are embedded or use `.glb`.
+   - Check import toast for missing resource hints.
+10. Bundle exports but assets are missing:
+   - Check `assets[]` in exported `project.json`.
+   - Embedded sources are bundled automatically; external sources are emitted as reference notes only.

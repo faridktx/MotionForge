@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import type * as THREE from "three";
 import { sceneStore, type SceneSnapshot } from "./sceneStore.js";
 
 /**
@@ -45,6 +46,12 @@ export interface TransformSnapshot {
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
   scale: { x: number; y: number; z: number };
+  material: {
+    editable: boolean;
+    color: number;
+    metallic: number;
+    roughness: number;
+  };
 }
 
 function round(v: number): number {
@@ -73,6 +80,27 @@ function snapshotTransform(id: string | null): TransformSnapshot | null {
       y: round(obj.scale.y),
       z: round(obj.scale.z),
     },
+    material: snapshotMaterial(obj),
+  };
+}
+
+function snapshotMaterial(obj: THREE.Object3D): TransformSnapshot["material"] {
+  if (!(obj as THREE.Mesh).isMesh) {
+    return { editable: false, color: 0xffffff, metallic: 0, roughness: 1 };
+  }
+
+  const mesh = obj as THREE.Mesh;
+  const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+  if (!material || material.type !== "MeshStandardMaterial") {
+    return { editable: false, color: 0xffffff, metallic: 0, roughness: 1 };
+  }
+
+  const standard = material as THREE.MeshStandardMaterial;
+  return {
+    editable: true,
+    color: standard.color.getHex(),
+    metallic: round(standard.metalness),
+    roughness: round(standard.roughness),
   };
 }
 

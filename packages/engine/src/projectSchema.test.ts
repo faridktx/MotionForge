@@ -153,7 +153,17 @@ describe("validateProjectData", () => {
   });
 
   it("rejects unsupported version", () => {
-    expect(validateProjectData({ version: 3, objects: [] })).toBe(false);
+    expect(validateProjectData({ version: 4, objects: [] })).toBe(false);
+  });
+
+  it("rejects assets/modelInstances in pre-v3 project versions", () => {
+    const bad = {
+      version: 2,
+      objects: [],
+      assets: [],
+      modelInstances: [],
+    };
+    expect(validateProjectData(bad)).toBe(false);
   });
 
   it("rejects non-finite keyframe values", () => {
@@ -225,5 +235,118 @@ describe("validateProjectData", () => {
     const result = validateProjectDataDetailed({ version: 9, objects: [] });
     expect(result.valid).toBe(false);
     expect(result.error).toContain("unsupported project version");
+  });
+
+  it("accepts a v3 project with embedded gltf assets and model instances", () => {
+    const v3 = {
+      version: 3,
+      objects: [],
+      assets: [
+        {
+          id: "asset_1",
+          name: "robot.glb",
+          type: "gltf",
+          source: {
+            mode: "embedded",
+            data: "AA==",
+            fileName: "robot.glb",
+          },
+          size: 2,
+        },
+      ],
+      modelInstances: [
+        {
+          id: "obj_model_1",
+          name: "Robot",
+          assetId: "asset_1",
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          materialOverrides: [
+            {
+              nodePath: "root/mesh_0",
+              color: 16777215,
+              metallic: 0.2,
+              roughness: 0.8,
+            },
+          ],
+        },
+      ],
+    };
+    expect(validateProjectData(v3)).toBe(true);
+  });
+
+  it("rejects v3 project with invalid asset source", () => {
+    const bad = {
+      version: 3,
+      objects: [],
+      assets: [
+        {
+          id: "asset_1",
+          name: "broken.glb",
+          type: "gltf",
+          source: {
+            mode: "embedded",
+          },
+          size: 10,
+        },
+      ],
+      modelInstances: [],
+    };
+    expect(validateProjectData(bad)).toBe(false);
+  });
+
+  it("rejects v3 project with model instance referencing unknown asset", () => {
+    const bad = {
+      version: 3,
+      objects: [],
+      assets: [],
+      modelInstances: [
+        {
+          id: "inst_1",
+          name: "MissingAsset",
+          assetId: "missing",
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      ],
+    };
+    expect(validateProjectData(bad)).toBe(false);
+  });
+
+  it("rejects invalid material override ranges in v3 model instances", () => {
+    const bad = {
+      version: 3,
+      objects: [],
+      assets: [
+        {
+          id: "asset_1",
+          name: "robot.glb",
+          type: "gltf",
+          source: { mode: "embedded", data: "AA==", fileName: "robot.glb" },
+          size: 2,
+        },
+      ],
+      modelInstances: [
+        {
+          id: "inst_1",
+          name: "Robot",
+          assetId: "asset_1",
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          materialOverrides: [
+            {
+              nodePath: "root/mesh_0",
+              color: 100,
+              metallic: 2,
+              roughness: 0.5,
+            },
+          ],
+        },
+      ],
+    };
+    expect(validateProjectData(bad)).toBe(false);
   });
 });

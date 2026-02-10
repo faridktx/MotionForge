@@ -1,28 +1,64 @@
 # Project Format
 
-MotionForge projects are stored as JSON files. This document describes the schema.
+MotionForge projects are stored as JSON files. This document describes versions `1`, `2`, and `3`.
 
 ## Version
 
-Current version: `2`
+Current version: `3`
 
-The `version` field must be present at the top level. v1 files (without animation data) are loaded with full backward compatibility.
-Phase 4 editing features (track-row timeline, keyframe selection/move/delete/edit) do not change the JSON schema and remain v2-compatible.
+- `v1`: scene objects only (no animation).
+- `v2`: adds animation clip data.
+- `v3`: adds asset metadata + model instances for imported glTF content.
 
-## Schema
+Backward compatibility is preserved: `v1` and `v2` continue to load.
+
+## Schema (v3 example)
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "objects": [
     {
       "id": "obj_1",
       "name": "Cube",
       "geometryType": "box",
       "color": 4490495,
+      "metallic": 0.1,
+      "roughness": 0.8,
       "position": [0, 0.5, 0],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
+    }
+  ],
+  "assets": [
+    {
+      "id": "asset_1",
+      "name": "robot.glb",
+      "type": "gltf",
+      "source": {
+        "mode": "embedded",
+        "fileName": "robot.glb",
+        "data": "AA..."
+      },
+      "size": 1024
+    }
+  ],
+  "modelInstances": [
+    {
+      "id": "obj_5",
+      "name": "Robot",
+      "assetId": "asset_1",
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "materialOverrides": [
+        {
+          "nodePath": "root/Body_0",
+          "color": 16777215,
+          "metallic": 0.3,
+          "roughness": 0.6
+        }
+      ]
     }
   ],
   "camera": {
@@ -38,7 +74,7 @@ Phase 4 editing features (track-row timeline, keyframe selection/move/delete/edi
         "property": "position.x",
         "keyframes": [
           { "time": 0, "value": 0, "interpolation": "linear" },
-          { "time": 2, "value": 3, "interpolation": "linear" }
+          { "time": 2, "value": 3, "interpolation": "easeInOut" }
         ]
       }
     ]
@@ -46,92 +82,99 @@ Phase 4 editing features (track-row timeline, keyframe selection/move/delete/edi
 }
 ```
 
-### Top-level fields
+## Top-level fields
 
-| Field       | Type   | Required | Description                        |
-| ----------- | ------ | -------- | ---------------------------------- |
-| `version`   | number | yes      | Schema version (currently 2)       |
-| `objects`   | array  | yes      | List of scene objects              |
-| `camera`    | object | no       | Camera state at save time          |
-| `animation` | object | no       | Animation clip (v2+, absent in v1) |
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `version` | number | yes | `1`, `2`, or `3` |
+| `objects` | array | yes | Primitive scene objects |
+| `assets` | array | v3 optional | Asset registry metadata |
+| `modelInstances` | array | v3 optional | Scene instances of imported assets |
+| `camera` | object | no | Camera state |
+| `animation` | object | no | Animation clip (`v2+`) |
 
-### Object fields
+## Primitive object fields (`objects[]`)
 
-| Field          | Type                        | Description            |
-| -------------- | --------------------------- | ---------------------- |
-| `id`           | string                      | Unique identifier      |
-| `name`         | string                      | Display name           |
-| `geometryType` | `"box" / "sphere" / "cone"` | Primitive geometry type|
-| `color`        | number                      | Hex color as integer   |
-| `position`     | `[x, y, z]`                | World position         |
-| `rotation`     | `[x, y, z]`                | Euler rotation in radians |
-| `scale`        | `[x, y, z]`                | Scale factors          |
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | Stable object identifier |
+| `name` | string | Display name |
+| `geometryType` | `"box" \| "sphere" \| "cone"` | Primitive type |
+| `color` | number | Base color (hex integer) |
+| `metallic` | number | Optional, `[0,1]` |
+| `roughness` | number | Optional, `[0,1]` |
+| `position` | `[x,y,z]` | Finite numbers |
+| `rotation` | `[x,y,z]` | Finite numbers (radians) |
+| `scale` | `[x,y,z]` | Finite numbers |
 
-### Camera fields
+## Asset fields (`assets[]`, v3)
 
-| Field      | Type         | Description                |
-| ---------- | ------------ | -------------------------- |
-| `position` | `[x, y, z]` | Camera world position      |
-| `target`   | `[x, y, z]` | OrbitControls target point |
-| `fov`      | number       | Field of view in degrees   |
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | Asset identifier |
+| `name` | string | File display name |
+| `type` | `"gltf"` | Currently only glTF assets |
+| `source` | object | Embedded or external |
+| `size` | number | Byte size, `>=0` |
 
-### Animation fields
+`source` variants:
+- Embedded: `{ "mode": "embedded", "fileName": string, "data": base64 }`
+- External reference: `{ "mode": "external", "path": string }`
 
-| Field            | Type   | Description                    |
-| ---------------- | ------ | ------------------------------ |
-| `durationSeconds`| number | Total clip duration in seconds |
-| `tracks`         | array  | Array of animation tracks      |
+## Model instance fields (`modelInstances[]`, v3)
 
-### Track fields
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | Scene object ID for root instance |
+| `name` | string | Instance display name |
+| `assetId` | string | Must reference an existing `assets[*].id` |
+| `position` | `[x,y,z]` | Finite numbers |
+| `rotation` | `[x,y,z]` | Finite numbers |
+| `scale` | `[x,y,z]` | Finite numbers |
+| `materialOverrides` | array | Optional per-node material values |
 
-| Field       | Type   | Description                                          |
-| ----------- | ------ | ---------------------------------------------------- |
-| `objectId`  | string | ID of the target object                              |
-| `property`  | string | One of: `position.x/y/z`, `rotation.x/y/z`, `scale.x/y/z` |
-| `keyframes` | array  | Sorted array of keyframes                            |
+`materialOverrides[]` entries:
+- `nodePath`: string path within imported hierarchy
+- `color`: number (hex integer)
+- `metallic`: number in `[0,1]`
+- `roughness`: number in `[0,1]`
 
-### Keyframe fields
+## Animation fields (`animation`)
 
-| Field           | Type   | Description                           |
-| --------------- | ------ | ------------------------------------- |
-| `time`          | number | Time in seconds                       |
-| `value`         | number | Property value at this time           |
-| `interpolation` | string | `"linear"`, `"step"`, `"easeIn"`, `"easeOut"`, or `"easeInOut"` |
+| Field | Type | Notes |
+| --- | --- | --- |
+| `durationSeconds` | number | `(0, 3600]` |
+| `tracks` | array | Keyframe tracks |
 
-## Storage
+Track `property` is one of:
+- `position.x`, `position.y`, `position.z`
+- `rotation.x`, `rotation.y`, `rotation.z`
+- `scale.x`, `scale.y`, `scale.z`
 
-- **localStorage:** Saved under the key `motionforge_project`
-- **File import:** Any `.json` file matching this schema
-- **File export:** Downloaded as `motionforge-project.json`
+Keyframes:
+- `time`: number in `[0, durationSeconds]`
+- `value`: finite number
+- `interpolation`: `linear`, `step`, `easeIn`, `easeOut`, `easeInOut`
 
-## Backward compatibility
+## Storage and export
 
-v1 files (version 1, no `animation` field) are fully supported. When loading a v1 file, the animation clip is reset to an empty 5-second clip.
-v2 files saved before Phase 4 remain valid; no migration is required.
-
-## Supported geometry types
-
-Currently only three primitive types are supported:
-- `box` (1x1x1 BoxGeometry)
-- `sphere` (radius 0.5, 32 segments SphereGeometry)
-- `cone` (radius 0.5, height 1, 32 segments ConeGeometry)
-
-Future phases will add mesh import and custom geometry support.
+- Local save: `localStorage` key `motionforge_project`.
+- JSON export: single file (`motionforge-project.json`).
+- Bundle export: zip (`motionforge-bundle.zip`) with:
+  - `project.json`
+  - `assets/*` (embedded asset bytes when available)
 
 ## Validation
 
-The `@motionforge/engine` package exports:
+Validation is provided by `@motionforge/engine`:
 
-- `validateProjectData()` for boolean validation checks.
-- `validateProjectDataDetailed()` for user-facing error reasons.
+- `validateProjectData()`
+- `validateProjectDataDetailed()`
 
-Validation rules include:
+Key rules:
+- `version` must be supported.
+- `assets` and `modelInstances` are only valid in `v3`.
+- `modelInstances[*].assetId` must reference an existing asset.
+- Numeric vectors and keyframe/material values must be finite and in valid ranges.
 
-- `version` must be finite and supported (`1` or `2`).
-- Numeric vectors (`position/rotation/scale`, camera fields) must be finite numbers.
-- `animation.durationSeconds` must be finite and within `(0, 3600]`.
-- Keyframe `time` must satisfy `0 <= time <= durationSeconds`.
-- Keyframe `value` must be finite.
-- Interpolation must be one of `linear`, `step`, `easeIn`, `easeOut`, `easeInOut`.
-
-On import, invalid files are rejected with a human-readable error toast and the current scene stays unchanged.
+Invalid imports are rejected with a user-visible error and do not replace the current scene.

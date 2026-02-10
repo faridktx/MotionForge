@@ -66,6 +66,7 @@ body,
   gap: 6px;
   align-items: center;
   flex-wrap: nowrap;
+  margin-left: auto;
 }
 
 .topbar-btn {
@@ -95,6 +96,18 @@ body,
   background: #2c3f59;
   border-color: #4a678f;
   color: #f0f6ff;
+}
+
+.topbar-import-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #b7d3f5;
+  font-size: 11px;
+  background: #1d2835;
+  border: 1px solid #38506f;
+  border-radius: 4px;
+  padding: 4px 6px;
 }
 
 /* ---- Main Layout ---- */
@@ -320,6 +333,11 @@ body,
   flex: 1;
 }
 
+.inspector-field--row {
+  gap: 8px;
+  justify-content: space-between;
+}
+
 .inspector-axis {
   font-size: 10px;
   font-weight: 600;
@@ -352,6 +370,29 @@ body,
 
 .inspector-input:focus {
   border-color: #5588cc;
+}
+
+.inspector-material {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inspector-material-title {
+  font-size: 11px;
+  color: #999;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.inspector-color {
+  width: 40px;
+  height: 24px;
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 0;
+  background: #1a1a1a;
 }
 
 .inspector-actions {

@@ -2,8 +2,15 @@ import * as THREE from "three";
 import { sceneStore } from "../../state/sceneStore.js";
 import { animationStore } from "../../state/animationStore.js";
 import { undoStore } from "../../state/undoStore.js";
+import { assetStore } from "../../state/assetStore.js";
 import { disposeObject } from "../three/disposeObject.js";
-import type { ProjectData, ProjectObjectData } from "./serialize.js";
+import {
+  annotateImportedHierarchy,
+  applyMaterialOverrides,
+  base64ToArrayBuffer,
+  parseGltfFromArrayBuffer,
+} from "../three/importGltf.js";
+import type { ProjectAssetData, ProjectData, ProjectObjectData, ProjectModelInstanceData } from "./serialize.js";
 
 function createGeometry(type: ProjectObjectData["geometryType"]): THREE.BufferGeometry {
   switch (type) {
@@ -24,8 +31,11 @@ export function clearUserObjects(): void {
   const scene = sceneStore.getScene();
   if (!scene) return;
 
+  const registered = new Set(sceneStore.getAllUserObjects().map((obj) => sceneStore.getIdForObject(obj)));
   const toRemove: THREE.Object3D[] = [];
   for (const obj of sceneStore.getAllUserObjects()) {
+    const parentId = obj.parent ? sceneStore.getIdForObject(obj.parent) : null;
+    if (parentId && registered.has(parentId)) continue;
     toRemove.push(obj);
   }
 
@@ -35,6 +45,43 @@ export function clearUserObjects(): void {
   }
 
   sceneStore.clearRegistry();
+}
+
+function applyPrimitiveMaterial(mesh: THREE.Mesh, objData: ProjectObjectData): void {
+  const material = mesh.material;
+  if (!(material instanceof THREE.MeshStandardMaterial)) return;
+  if (typeof objData.metallic === "number") {
+    material.metalness = Math.max(0, Math.min(1, objData.metallic));
+  }
+  if (typeof objData.roughness === "number") {
+    material.roughness = Math.max(0, Math.min(1, objData.roughness));
+  }
+}
+
+async function loadModelInstance(
+  scene: THREE.Scene,
+  assetsById: Map<string, ProjectAssetData>,
+  instance: ProjectModelInstanceData,
+): Promise<THREE.Object3D | null> {
+  const asset = assetsById.get(instance.assetId);
+  if (!asset || asset.type !== "gltf") return null;
+  if (asset.source.mode !== "embedded") return null;
+
+  const arrayBuffer = base64ToArrayBuffer(asset.source.data);
+  const root = await parseGltfFromArrayBuffer(arrayBuffer);
+
+  annotateImportedHierarchy(root, asset.id, asset.name);
+  root.name = instance.name;
+  root.position.set(...instance.position);
+  root.rotation.set(...instance.rotation);
+  root.scale.set(...instance.scale);
+  if (instance.materialOverrides && instance.materialOverrides.length > 0) {
+    applyMaterialOverrides(root, instance.materialOverrides);
+  }
+
+  scene.add(root);
+  sceneStore.registerHierarchy(root, { rootId: instance.id });
+  return root;
 }
 
 /**
@@ -68,13 +115,14 @@ export function createDefaultObjects(): THREE.Mesh[] {
  * Deserialize a project: clear existing user objects, then recreate from data.
  * Supports v1 (no animation) and v2 (with animation) formats.
  */
-export function deserializeProject(data: ProjectData): THREE.Mesh[] {
+export async function deserializeProject(data: ProjectData): Promise<THREE.Object3D[]> {
   const scene = sceneStore.getScene();
   if (!scene) return [];
 
   clearUserObjects();
+  assetStore.replaceAssets(data.assets ?? []);
 
-  const meshes: THREE.Mesh[] = [];
+  const created: THREE.Object3D[] = [];
 
   for (const objData of data.objects) {
     const geo = createGeometry(objData.geometryType);
@@ -84,10 +132,25 @@ export function deserializeProject(data: ProjectData): THREE.Mesh[] {
     mesh.position.set(...objData.position);
     mesh.rotation.set(...objData.rotation);
     mesh.scale.set(...objData.scale);
+    applyPrimitiveMaterial(mesh, objData);
 
     scene.add(mesh);
     sceneStore.registerObject(mesh, objData.id);
-    meshes.push(mesh);
+    created.push(mesh);
+  }
+
+  if (data.assets && data.modelInstances) {
+    const assetsById = new Map(data.assets.map((asset) => [asset.id, asset]));
+    for (const instance of data.modelInstances) {
+      try {
+        const root = await loadModelInstance(scene, assetsById, instance);
+        if (root) {
+          created.push(root);
+        }
+      } catch {
+        // Keep loading remaining content if one model fails to deserialize.
+      }
+    }
   }
 
   // Restore camera if present
@@ -113,7 +176,7 @@ export function deserializeProject(data: ProjectData): THREE.Mesh[] {
 
   undoStore.clear();
   sceneStore.clearDirty();
-  return meshes;
+  return created;
 }
 
 /**
@@ -124,6 +187,7 @@ export function newProject(): THREE.Mesh[] {
   if (!scene) return [];
 
   clearUserObjects();
+  assetStore.clearAssets();
 
   const meshes = createDefaultObjects();
   for (const mesh of meshes) {

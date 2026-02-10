@@ -3,6 +3,7 @@ import { useSelectedTransform } from "../state/useScene.js";
 import { sceneStore } from "../state/sceneStore.js";
 import { animationStore } from "../state/animationStore.js";
 import { computeBoundingSphere, frameSphere } from "../lib/three/cameraFraming.js";
+import type * as THREE from "three";
 
 const DEG_TO_RAD = Math.PI / 180;
 const MIN_SCALE = 0.001;
@@ -60,6 +61,33 @@ export function InspectorContent() {
     animationStore.addKeyframesForSelected(property, { source: "inspector" });
   }, []);
 
+  const applyMaterial = useCallback((field: "color" | "metallic" | "roughness", raw: string) => {
+    const id = sceneStore.getSelectedId();
+    if (!id) return;
+    const obj = sceneStore.getObjectById(id);
+    if (!obj || !(obj as THREE.Mesh).isMesh) return;
+    const mesh = obj as THREE.Mesh;
+    const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+    if (!material || material.type !== "MeshStandardMaterial") return;
+    const standard = material as THREE.MeshStandardMaterial;
+
+    if (field === "color") {
+      standard.color.set(raw);
+    } else {
+      const parsed = parseFloat(raw);
+      if (!Number.isFinite(parsed)) return;
+      const clamped = Math.max(0, Math.min(1, parsed));
+      if (field === "metallic") {
+        standard.metalness = clamped;
+      } else {
+        standard.roughness = clamped;
+      }
+    }
+
+    standard.needsUpdate = true;
+    sceneStore.notifyTransformChanged();
+  }, []);
+
   if (!snap) {
     return <p className="inspector-empty">No object selected</p>;
   }
@@ -104,6 +132,64 @@ export function InspectorContent() {
 
       <div className="inspector-divider" />
 
+      {snap.material.editable && (
+        <>
+          <div className="inspector-material">
+            <div className="inspector-material-title">Material</div>
+            <label className="inspector-field inspector-field--row">
+              <span className="inspector-label">Base Color</span>
+              <input
+                key={`${selId}-mat-color-${snap.material.color}`}
+                type="color"
+                className="inspector-color"
+                defaultValue={hexColor(snap.material.color)}
+                onChange={(event) => applyMaterial("color", event.target.value)}
+              />
+            </label>
+            <label className="inspector-field inspector-field--row">
+              <span className="inspector-label">Metallic</span>
+              <input
+                key={`${selId}-mat-metallic-${snap.material.metallic}`}
+                type="number"
+                className="inspector-input"
+                step={0.05}
+                min={0}
+                max={1}
+                defaultValue={snap.material.metallic}
+                onBlur={(event) => applyMaterial("metallic", event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    applyMaterial("metallic", (event.target as HTMLInputElement).value);
+                    (event.target as HTMLInputElement).blur();
+                  }
+                }}
+              />
+            </label>
+            <label className="inspector-field inspector-field--row">
+              <span className="inspector-label">Roughness</span>
+              <input
+                key={`${selId}-mat-roughness-${snap.material.roughness}`}
+                type="number"
+                className="inspector-input"
+                step={0.05}
+                min={0}
+                max={1}
+                defaultValue={snap.material.roughness}
+                onBlur={(event) => applyMaterial("roughness", event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    applyMaterial("roughness", (event.target as HTMLInputElement).value);
+                    (event.target as HTMLInputElement).blur();
+                  }
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="inspector-divider" />
+        </>
+      )}
+
       <div className="inspector-actions">
         <button className="inspector-btn" onClick={resetTransform}>
           Reset Transform
@@ -114,6 +200,10 @@ export function InspectorContent() {
       </div>
     </div>
   );
+}
+
+function hexColor(hex: number): string {
+  return `#${hex.toString(16).padStart(6, "0").slice(-6)}`;
 }
 
 interface CollapsibleSectionProps {

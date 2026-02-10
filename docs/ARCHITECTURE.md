@@ -98,7 +98,7 @@ Object3D references are stored in the registry map, but React components receive
 
 - **Clip**: Top-level container with `durationSeconds` and an array of `Track`s
 - **Track**: Binds to an `objectId` and a `TrackProperty` (e.g. `"position.x"`), contains sorted `Keyframe`s
-- **Keyframe**: `{ time, value, interpolation }` where interpolation is `"linear"` or `"step"`
+- **Keyframe**: `{ time, value, interpolation }` where interpolation is one of `linear`, `step`, `easeIn`, `easeOut`, `easeInOut`
 
 ### Animation store
 
@@ -128,7 +128,7 @@ The timeline is split into a left track list and a right time area:
   - `Ctrl+C` / `Ctrl+V` copies and pastes selected keys at playhead while preserving relative offsets
   - `Alt+ArrowLeft` / `Alt+ArrowRight` nudges selected keys by small time increments
   - `Delete` / `Backspace` or trash button removes selected keys
-- **Editing panel**: Single selected key supports editing time, value, and interpolation (`linear`/`step`), all undoable
+- **Editing panel**: Single selected key supports editing time, value, and interpolation (`linear`/`step`/`easeIn`/`easeOut`/`easeInOut`), all undoable
 - **Zoom**: `pixelsPerSecond` is stored in `timelineStore` and controlled by slider or `Ctrl+Wheel`
 
 ### Evaluation
@@ -172,14 +172,15 @@ Sections are collapsible, and each section has a "Key" button that inserts keyfr
 
 ## Persistence
 
-### Save (v2)
+### Save (v3)
 
 1. `serializeProject()` walks the registry and builds a JSON object
-2. Each mesh's geometry type is detected from `geometry.type`
-3. Material color is captured from `MeshStandardMaterial.color`
-4. Camera position, target, and fov are included
-5. Animation clip is included if it has any tracks
-6. JSON is written to `localStorage` under `motionforge_project`
+2. Primitive meshes are serialized into `objects[]` (geometry + transform + material values)
+3. Imported model roots are serialized into `modelInstances[]` with linked `assetId`
+4. Asset metadata is serialized into `assets[]` (embedded and external source modes)
+5. Camera position, target, and fov are included
+6. Animation clip is included if it has any tracks
+7. JSON is written to `localStorage` under `motionforge_project`
 
 ### Load
 
@@ -188,17 +189,43 @@ Sections are collapsible, and each section has a "Key" button that inserts keyfr
 3. `deserializeProject()` recreates meshes from the JSON data
 4. Objects are added to the scene and registered in the store
 5. Camera state is restored if present
-6. Animation clip is restored (v2) or reset (v1 files without animation)
-7. Undo stack is cleared
-8. Dirty flag is cleared
+6. Imported models (v3) are reconstructed from embedded glTF asset bytes and material overrides
+7. Animation clip is restored (v2/v3) or reset (v1 files without animation)
+8. Asset store is replaced with the project's `assets[]`
+9. Undo stack is cleared
+10. Dirty flag is cleared
 
 ### Export
 
-`downloadProjectJSON()` serializes the project and triggers a browser file download as `.json`.
+- `downloadProjectJSON()` serializes the project and downloads `.json`.
+- `downloadProjectBundle()` exports a zip with `project.json` and embedded files under `assets/`.
 
 ### New project
 
-Same as load, but uses `createDefaultObjects()` to make the standard cube/sphere/cone. Animation and undo are reset.
+Same as load, but uses `createDefaultObjects()` to make the standard cube/sphere/cone. Animation, undo, and asset registry are reset.
+
+## Asset Pipeline (Phase 7)
+
+### Model import flow
+
+1. User clicks `Import Model` in top bar.
+2. File extension/size is validated (`.gltf/.glb`; warning threshold + hard max limit).
+3. File is read to `ArrayBuffer` with progress updates and cancel support.
+4. `GLTFLoader.parse()` creates a Three.js hierarchy.
+5. Imported nodes are annotated with:
+   - `__assetId`
+   - `__isImportedModel`
+   - `__assetNodePath`
+   - `__isModelRoot` (root only)
+6. Scene store registers the hierarchy in one batched `objects` notification.
+7. Asset metadata + embedded bytes are stored in `assetStore`.
+
+### Failure states
+
+- Wrong file type: early rejection with toast.
+- Oversized file: blocked before load.
+- Broken glTF / missing external textures: toast error; scene remains unchanged.
+- Cancel: aborts active import cleanly and preserves existing project state.
 
 ## Cleanup and Disposal
 
@@ -210,7 +237,7 @@ On unmount (React `useEffect` cleanup):
 4. Remove all event listeners (keydown, wheel, pointer)
 5. Dispose gizmo (removes its event listeners and geometries/materials)
 6. Dispose OrbitControls
-7. Traverse the scene and dispose all geometries and materials via `disposeObject(scene)`
+7. Traverse the scene and dispose all geometries/materials/textures via `disposeObject(scene)`
 8. Dispose the renderer
 9. Remove the canvas element from the DOM
 
