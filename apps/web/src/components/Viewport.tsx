@@ -8,7 +8,8 @@ import { Gizmo, type GizmoMode } from "../lib/three/gizmo/Gizmo.js";
 import { sceneStore } from "../state/sceneStore.js";
 import { undoStore } from "../state/undoStore.js";
 import { animationStore } from "../state/animationStore.js";
-import { rendererStatsStore } from "../state/rendererStatsStore.js";
+import { rendererStatsStore, type RendererStatsSnapshot } from "../state/rendererStatsStore.js";
+import { commandBus } from "../lib/commands/commandBus.js";
 import { createDefaultObjects } from "../lib/project/deserialize.js";
 
 interface ViewportProps {
@@ -17,12 +18,6 @@ interface ViewportProps {
 
 const HIGHLIGHT_EMISSIVE = new THREE.Color(0x335599);
 const DEFAULT_EMISSIVE = new THREE.Color(0x000000);
-
-interface RendererStatsSnapshot {
-  drawCalls: number;
-  geometries: number;
-  textures: number;
-}
 
 export function Viewport({ onModeChange }: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -269,87 +264,178 @@ export function Viewport({ onModeChange }: ViewportProps) {
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
 
-    // -- Keyboard shortcuts --
-    function onKeyDown(e: KeyboardEvent) {
-      const active = document.activeElement;
-      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
-
-      // Undo/redo
-      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        undoStore.undo();
-        return;
+    const frameSelected = () => {
+      const sel = sceneStore.getSelectedObject();
+      if (sel) {
+        const bs = computeBoundingSphere([sel]);
+        if (bs) {
+          const framing = frameSphere(bs, camera);
+          smoothFrame(framing.position, framing.target);
+          return;
+        }
       }
-      if ((e.metaKey || e.ctrlKey) && (e.key === "Z" || e.key === "y")) {
-        e.preventDefault();
-        undoStore.redo();
-        return;
-      }
+      smoothFrame(new THREE.Vector3(4, 3, 4), new THREE.Vector3(0, 0, 0));
+    };
 
-      switch (e.key) {
-        case "Escape": {
+    const frameAll = () => {
+      const selectables = sceneStore.getAllUserObjects();
+      const bs = computeBoundingSphere(selectables);
+      if (!bs) return;
+      const framing = frameSphere(bs, camera);
+      smoothFrame(framing.position, framing.target);
+    };
+
+    const unregisterCommands = [
+      commandBus.register({
+        id: "edit.undo",
+        title: "Undo",
+        category: "Edit",
+        shortcutLabel: "Ctrl+Z",
+        isEnabled: () => undoStore.canUndo(),
+        run: () => undoStore.undo(),
+      }),
+      commandBus.register({
+        id: "edit.redo",
+        title: "Redo",
+        category: "Edit",
+        shortcutLabel: "Ctrl+Y",
+        isEnabled: () => undoStore.canRedo(),
+        run: () => undoStore.redo(),
+      }),
+      commandBus.register({
+        id: "gizmo.mode.translate",
+        title: "Gizmo: Translate",
+        category: "Viewport",
+        shortcutLabel: "W",
+        run: () => {
+          gizmo.setMode("translate");
+          onModeChange?.("translate");
+        },
+      }),
+      commandBus.register({
+        id: "gizmo.mode.rotate",
+        title: "Gizmo: Rotate",
+        category: "Viewport",
+        shortcutLabel: "E",
+        run: () => {
+          gizmo.setMode("rotate");
+          onModeChange?.("rotate");
+        },
+      }),
+      commandBus.register({
+        id: "gizmo.mode.scale",
+        title: "Gizmo: Scale",
+        category: "Viewport",
+        shortcutLabel: "R",
+        run: () => {
+          gizmo.setMode("scale");
+          onModeChange?.("scale");
+        },
+      }),
+      commandBus.register({
+        id: "selection.cancelOrClear",
+        title: "Cancel Drag / Clear Selection",
+        category: "Viewport",
+        shortcutLabel: "Esc",
+        run: () => {
           if (gizmo.isDragging()) {
             gizmo.cancelDrag();
           } else {
             sceneStore.setSelectedId(null);
           }
-          break;
-        }
-        case "w": {
-          gizmo.setMode("translate");
-          onModeChange?.("translate");
-          break;
-        }
-        case "e": {
-          gizmo.setMode("rotate");
-          onModeChange?.("rotate");
-          break;
-        }
-        case "r": {
-          gizmo.setMode("scale");
-          onModeChange?.("scale");
-          break;
-        }
-        case "k": {
+        },
+      }),
+      commandBus.register({
+        id: "timeline.keyAll",
+        title: "Keyframe Transform",
+        category: "Timeline",
+        shortcutLabel: "K",
+        run: () => {
           animationStore.addAllKeyframesForSelected({
             source: "shortcut",
             label: "Keyframe Transform",
           });
-          break;
-        }
-        case "f": {
-          const selectables = sceneStore.getAllUserObjects();
-          if (e.shiftKey) {
-            const bs = computeBoundingSphere(selectables);
-            if (bs) {
-              const framing = frameSphere(bs, camera);
-              smoothFrame(framing.position, framing.target);
-            }
-          } else {
-            const sel = sceneStore.getSelectedObject();
-            if (sel) {
-              const bs = computeBoundingSphere([sel]);
-              if (bs) {
-                const framing = frameSphere(bs, camera);
-                smoothFrame(framing.position, framing.target);
-              }
-            } else {
-              smoothFrame(new THREE.Vector3(4, 3, 4), new THREE.Vector3(0, 0, 0));
-            }
-          }
-          break;
-        }
-        case "g": {
+        },
+      }),
+      commandBus.register({
+        id: "timeline.playPause",
+        title: "Play/Pause",
+        category: "Timeline",
+        shortcutLabel: "Space",
+        run: () => animationStore.togglePlayback(),
+      }),
+      commandBus.register({
+        id: "viewport.frameSelected",
+        title: "Frame Selected",
+        category: "Viewport",
+        shortcutLabel: "F",
+        run: frameSelected,
+      }),
+      commandBus.register({
+        id: "viewport.frameAll",
+        title: "Frame All",
+        category: "Viewport",
+        shortcutLabel: "Shift+F",
+        run: frameAll,
+      }),
+      commandBus.register({
+        id: "viewport.toggleGrid",
+        title: "Toggle Grid",
+        category: "Viewport",
+        shortcutLabel: "G",
+        run: () => {
           gridVisible = !gridVisible;
           grid.visible = gridVisible;
           axes.visible = gridVisible;
-          break;
-        }
-        case " ": {
+        },
+      }),
+    ];
+
+    // -- Keyboard shortcuts --
+    function onKeyDown(e: KeyboardEvent) {
+      const hasMod = e.metaKey || e.ctrlKey;
+      const lower = e.key.toLowerCase();
+
+      if (hasMod && lower === "z" && !e.shiftKey) {
+        if (commandBus.execute("edit.undo")) {
           e.preventDefault();
-          animationStore.togglePlayback();
-          break;
         }
+        return;
+      }
+      if (hasMod && (lower === "y" || (lower === "z" && e.shiftKey))) {
+        if (commandBus.execute("edit.redo")) {
+          e.preventDefault();
+        }
+        return;
+      }
+
+      switch (lower) {
+        case "escape":
+          commandBus.execute("selection.cancelOrClear");
+          break;
+        case "w":
+          commandBus.execute("gizmo.mode.translate");
+          break;
+        case "e":
+          commandBus.execute("gizmo.mode.rotate");
+          break;
+        case "r":
+          commandBus.execute("gizmo.mode.scale");
+          break;
+        case "k":
+          commandBus.execute("timeline.keyAll");
+          break;
+        case "f":
+          commandBus.execute(e.shiftKey ? "viewport.frameAll" : "viewport.frameSelected");
+          break;
+        case "g":
+          commandBus.execute("viewport.toggleGrid");
+          break;
+        case " ":
+          if (commandBus.execute("timeline.playPause")) {
+            e.preventDefault();
+          }
+          break;
       }
     }
 
@@ -387,6 +473,10 @@ export function Viewport({ onModeChange }: ViewportProps) {
         geometries: renderer.info.memory.geometries,
         textures: renderer.info.memory.textures,
       };
+      rendererStatsStore.setStats(next);
+      if (!rendererStatsStore.getEnabled()) {
+        return;
+      }
       setStats((prev) => (
         prev.drawCalls === next.drawCalls &&
         prev.geometries === next.geometries &&
@@ -405,6 +495,7 @@ export function Viewport({ onModeChange }: ViewportProps) {
       unsubTransform();
       stopFrameTween();
       window.removeEventListener("keydown", onKeyDown);
+      unregisterCommands.forEach((dispose) => dispose());
       renderer.domElement.removeEventListener("wheel", preventScroll);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);

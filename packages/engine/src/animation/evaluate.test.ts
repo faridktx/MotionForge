@@ -64,7 +64,7 @@ describe("evaluateTrack", () => {
         { time: 2, value: 10, interpolation: "linear" },
       ],
     };
-    expect(evaluateTrack(t, 1)).toBeCloseTo(2.5);
+    expect(evaluateTrack(t, 1)).toBeCloseTo(1.25);
   });
 
   it("handles easeOut interpolation", () => {
@@ -76,7 +76,7 @@ describe("evaluateTrack", () => {
         { time: 2, value: 10, interpolation: "linear" },
       ],
     };
-    expect(evaluateTrack(t, 1)).toBeCloseTo(7.5);
+    expect(evaluateTrack(t, 1)).toBeCloseTo(8.75);
   });
 
   it("handles easeInOut interpolation", () => {
@@ -88,8 +88,22 @@ describe("evaluateTrack", () => {
         { time: 2, value: 10, interpolation: "linear" },
       ],
     };
-    expect(evaluateTrack(t, 0.5)).toBeCloseTo(1.25);
-    expect(evaluateTrack(t, 1.5)).toBeCloseTo(8.75);
+    expect(evaluateTrack(t, 0.5)).toBeCloseTo(0.625);
+    expect(evaluateTrack(t, 1.5)).toBeCloseTo(9.375);
+  });
+
+  it("follows cubic easing shape samples", () => {
+    const t: Track = {
+      objectId: "obj_1",
+      property: "position.x",
+      keyframes: [
+        { time: 0, value: 0, interpolation: "easeInOut" },
+        { time: 1, value: 1, interpolation: "linear" },
+      ],
+    };
+    expect(evaluateTrack(t, 0.25)).toBeCloseTo(0.0625, 6);
+    expect(evaluateTrack(t, 0.5)).toBeCloseTo(0.5, 6);
+    expect(evaluateTrack(t, 0.75)).toBeCloseTo(0.9375, 6);
   });
 
   it("returns exact value at keyframe time", () => {

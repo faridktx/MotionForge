@@ -392,6 +392,11 @@ function sanitizeBundleFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+export function getBundleAssetFileName(asset: ProjectAssetData): string {
+  const baseName = sanitizeBundleFileName(asset.source.mode === "embedded" ? asset.source.fileName : asset.name);
+  return `${sanitizeBundleFileName(asset.id)}-${baseName || "asset.bin"}`;
+}
+
 export function downloadProjectBundle(): void {
   const data = serializeProject();
   const bundleFiles: Record<string, Uint8Array> = {};
@@ -401,8 +406,7 @@ export function downloadProjectBundle(): void {
   if (data.assets) {
     const sortedAssets = [...data.assets].sort((a, b) => a.id.localeCompare(b.id));
     for (const asset of sortedAssets) {
-      const baseName = sanitizeBundleFileName(asset.source.mode === "embedded" ? asset.source.fileName : asset.name);
-      const deterministicName = `${sanitizeBundleFileName(asset.id)}-${baseName || "asset.bin"}`;
+      const deterministicName = getBundleAssetFileName(asset);
       if (asset.source.mode === "embedded") {
         bundleFiles[`assets/${deterministicName}`] = new Uint8Array(base64ToArrayBuffer(asset.source.data));
       } else {

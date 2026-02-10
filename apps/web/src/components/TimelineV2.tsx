@@ -774,7 +774,7 @@ export function TimelineV2() {
           </svg>
         </button>
 
-        <span className="timeline-v2-shortcuts">K key all · Shift+Drag marquee · Drag background pan · Wheel zoom · Del remove · Ctrl+C/V copy/paste · Alt+Arrows nudge</span>
+        <span className="timeline-v2-shortcuts">K key · Shift+Drag box · Drag pan · Wheel zoom · Del · Ctrl+C/V · Alt+Arrows</span>
       </div>
 
       {selectedSingleKey && (

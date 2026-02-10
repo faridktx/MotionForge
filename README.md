@@ -1,5 +1,8 @@
 # MotionForge
 
+[![Gate](https://github.com/faridabbasov/MotionForge/actions/workflows/gate.yml/badge.svg)](https://github.com/faridabbasov/MotionForge/actions/workflows/gate.yml)
+[![Deploy Pages](https://github.com/faridabbasov/MotionForge/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/faridabbasov/MotionForge/actions/workflows/deploy-pages.yml)
+
 <p>
   <img src="apps/web/public/motionforge-logo.svg" alt="MotionForge logo" width="96" height="96" />
 </p>
@@ -23,6 +26,8 @@ pnpm -C apps/web dev
 
 Open `http://localhost:5173`.
 
+Live build: [MotionForge on GitHub Pages](https://faridabbasov.github.io/MotionForge/).
+
 ## Demo In 60 Seconds
 
 1. Click `Start Demo Project` on first run.
@@ -33,6 +38,7 @@ Open `http://localhost:5173`.
 
 ## Key Docs
 
+- Docs index: [docs/README.md](docs/README.md)
 - Project format: [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md)
 - Release gate: [RELEASE_GATE.md](RELEASE_GATE.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -48,4 +54,3 @@ Open `http://localhost:5173`.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-

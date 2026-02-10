@@ -14,7 +14,14 @@ import {
   saveAutosaveSnapshot,
   serializeProject,
 } from "../lib/project/serialize.js";
+import { parseProjectBundle } from "../lib/project/bundle.js";
+import { runSoakTest } from "../lib/dev/soakHarness.js";
 import { deserializeProject, newProject } from "../lib/project/deserialize.js";
+import {
+  exportVideoFromCanvas,
+  validateVideoExportSettings,
+  type VideoExportSettings,
+} from "../lib/export/videoExport.js";
 import { toastStore } from "../state/toastStore.js";
 import { assetStore } from "../state/assetStore.js";
 import {
@@ -28,6 +35,7 @@ import {
   toEmbeddedAssetRecord,
   validateImportBudget,
 } from "../lib/three/importGltf.js";
+import { insertBuiltInDemoModel } from "../lib/three/demoModel.js";
 import { sceneStore } from "../state/sceneStore.js";
 import { collectReferencedAssetIdsFromModelRoots, findUnusedAssetIds } from "../lib/project/assetMaintenance.js";
 import {
@@ -37,11 +45,8 @@ import {
   writeNativeFileAccessSettings,
 } from "../lib/file/nativeFileAccess.js";
 import { rendererStatsStore } from "../state/rendererStatsStore.js";
-import {
-  createCommandPaletteActions,
-  filterCommandPaletteActions,
-  type CommandPaletteAction,
-} from "../lib/commands/commandPalette.js";
+import { fileDialogStore } from "../state/fileDialogStore.js";
+import { commandBus } from "../lib/commands/commandBus.js";
 
 interface TopBarProps {
   onHelp: () => void;
@@ -55,8 +60,18 @@ interface PendingOpenState {
   nativeHandle: FileSystemFileHandle | null;
 }
 
+const DEFAULT_VIDEO_EXPORT_SETTINGS: VideoExportSettings = {
+  format: "mp4",
+  width: 1280,
+  height: 720,
+  fps: 30,
+  durationSeconds: 2,
+  transparentBackground: false,
+};
+
 const AUTOSAVE_SECONDS_KEY = "motionforge_autosave_seconds_v1";
 const DEFAULT_AUTOSAVE_SECONDS = 15;
+const DEV_TOOLS_KEY = "motionforge_dev_tools_enabled_v1";
 
 function readAutosaveSeconds(): number {
   const raw = localStorage.getItem(AUTOSAVE_SECONDS_KEY);
@@ -67,21 +82,15 @@ function readAutosaveSeconds(): number {
   return parsed;
 }
 
-function dispatchViewportShortcut(key: string, options: { shiftKey?: boolean } = {}) {
-  window.dispatchEvent(
-    new KeyboardEvent("keydown", {
-      key,
-      shiftKey: options.shiftKey ?? false,
-      bubbles: true,
-      cancelable: true,
-    }),
-  );
+function readDevToolsEnabled(): boolean {
+  return localStorage.getItem(DEV_TOOLS_KEY) === "1";
 }
 
 export function TopBar({ onHelp }: TopBarProps) {
   const dirty = useDirtyState();
   const projectFileInputRef = useRef<HTMLInputElement>(null);
   const modelFileInputRef = useRef<HTMLInputElement>(null);
+  const bundleFileInputRef = useRef<HTMLInputElement>(null);
   const nativeFileHandleRef = useRef<FileSystemFileHandle | null>(null);
   const [importStatus, setImportStatus] = useState(() => assetStore.getImportStatus());
   const [recentOpen, setRecentOpen] = useState(false);
@@ -89,16 +98,35 @@ export function TopBar({ onHelp }: TopBarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [nativeEnabled, setNativeEnabled] = useState(() => readNativeFileAccessSettings().enabled);
   const [rendererStatsEnabled, setRendererStatsEnabled] = useState(() => rendererStatsStore.getEnabled());
+  const [devToolsEnabled, setDevToolsEnabled] = useState(() => readDevToolsEnabled());
+  const [soakRunning, setSoakRunning] = useState(false);
+  const [soakStatus, setSoakStatus] = useState<string | null>(null);
+  const [videoExportOpen, setVideoExportOpen] = useState(false);
+  const [videoExportRunning, setVideoExportRunning] = useState(false);
+  const [videoExportProgress, setVideoExportProgress] = useState<string | null>(null);
+  const [videoExportSettings, setVideoExportSettings] = useState<VideoExportSettings>(
+    DEFAULT_VIDEO_EXPORT_SETTINGS,
+  );
   const [autosaveSeconds, setAutosaveSeconds] = useState(() => readAutosaveSeconds());
   const [pendingOpen, setPendingOpen] = useState<PendingOpenState | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [commandActiveIndex, setCommandActiveIndex] = useState(0);
+  const [commandRevision, setCommandRevision] = useState(0);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const soakAbortRef = useRef<AbortController | null>(null);
+  const videoExportAbortRef = useRef<AbortController | null>(null);
   const nativeSupported = isNativeFileAccessSupported();
 
   useEffect(() => {
     return assetStore.subscribeImport(() => setImportStatus(assetStore.getImportStatus()));
+  }, []);
+
+  useEffect(() => {
+    fileDialogStore.registerProjectOpenDialog(() => {
+      projectFileInputRef.current?.click();
+    });
+    return () => fileDialogStore.registerProjectOpenDialog(null);
   }, []);
 
   const refreshRecentProjects = useCallback(() => {
@@ -128,6 +156,19 @@ export function TopBar({ onHelp }: TopBarProps) {
   }, [autosaveSeconds]);
 
   useEffect(() => {
+    localStorage.setItem(DEV_TOOLS_KEY, devToolsEnabled ? "1" : "0");
+  }, [devToolsEnabled]);
+
+  useEffect(() => {
+    return () => {
+      soakAbortRef.current?.abort();
+      soakAbortRef.current = null;
+      videoExportAbortRef.current?.abort();
+      videoExportAbortRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     const intervalMs = autosaveSeconds * 1000;
     const timer = window.setInterval(() => {
       if (!sceneStore.isDirty()) return;
@@ -155,8 +196,9 @@ export function TopBar({ onHelp }: TopBarProps) {
       refreshRecentProjects();
       toastStore.show(`${label} successful`, "success");
       return true;
-    } catch {
-      toastStore.show(`${label} failed: project could not be reconstructed`, "error");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "project could not be reconstructed";
+      toastStore.show(`${label} failed: ${reason}`, "error");
       return false;
     }
   }, [refreshRecentProjects]);
@@ -327,8 +369,26 @@ export function TopBar({ onHelp }: TopBarProps) {
     projectFileInputRef.current?.click();
   }, [confirmDiscard]);
 
+  const handleImportBundle = useCallback(() => {
+    if (!confirmDiscard("Open Bundle")) return;
+    bundleFileInputRef.current?.click();
+  }, [confirmDiscard]);
+
   const handleImportModel = useCallback(() => {
     modelFileInputRef.current?.click();
+  }, []);
+
+  const handleInsertDemoModel = useCallback(async () => {
+    try {
+      const { summary } = await insertBuiltInDemoModel();
+      toastStore.show(
+        `Demo model inserted (${summary.nodes} nodes · ${summary.meshes} meshes · ${summary.materials} materials · ${summary.textures} textures)`,
+        "success",
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "unknown import error";
+      toastStore.show(`Insert demo model failed: ${reason}`, "error");
+    }
   }, []);
 
   const handlePurgeUnusedAssets = useCallback(() => {
@@ -355,6 +415,63 @@ export function TopBar({ onHelp }: TopBarProps) {
     toastStore.show("Project exported", "success");
   }, []);
 
+  const handleOpenVideoExport = useCallback(() => {
+    setVideoExportOpen(true);
+    setVideoExportProgress(null);
+  }, []);
+
+  const handleStartVideoExport = useCallback(async () => {
+    const canvas = document.querySelector(".viewport canvas") as HTMLCanvasElement | null;
+    if (!canvas) {
+      toastStore.show("Video export failed: viewport canvas is unavailable", "error");
+      return;
+    }
+
+    const errors = validateVideoExportSettings(videoExportSettings);
+    if (errors.length > 0) {
+      toastStore.show(`Video export failed: ${errors[0]}`, "error");
+      return;
+    }
+
+    const controller = new AbortController();
+    videoExportAbortRef.current = controller;
+    setVideoExportRunning(true);
+    setVideoExportProgress("Preparing export...");
+
+    try {
+      const result = await exportVideoFromCanvas(canvas, videoExportSettings, {
+        signal: controller.signal,
+        onProgress(progress) {
+          setVideoExportProgress(progress.message);
+        },
+      });
+      const url = URL.createObjectURL(result.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `motionforge-export-${Date.now()}.${result.extension}`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setVideoExportProgress("Export complete");
+      toastStore.show("Video export complete", "success");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setVideoExportProgress("Export canceled");
+        toastStore.show("Video export canceled", "info");
+      } else {
+        const reason = error instanceof Error ? error.message : "unknown export error";
+        setVideoExportProgress("Export failed");
+        toastStore.show(`Video export failed: ${reason}`, "error");
+      }
+    } finally {
+      videoExportAbortRef.current = null;
+      setVideoExportRunning(false);
+    }
+  }, [videoExportSettings]);
+
+  const handleCancelVideoExport = useCallback(() => {
+    videoExportAbortRef.current?.abort();
+  }, []);
+
   const handleExportBundle = useCallback(() => {
     downloadProjectBundle();
     toastStore.show("Bundle exported", "success");
@@ -368,6 +485,32 @@ export function TopBar({ onHelp }: TopBarProps) {
     // Reset so the same file can be imported again
     e.target.value = "";
   }, [reviewOpenCandidate]);
+
+  const handleBundleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const parsed = parseProjectBundle(bytes);
+      if (!parsed.data) {
+        toastStore.show(parsed.error ?? "Bundle import failed", "error");
+        return;
+      }
+      for (const warning of parsed.warnings) {
+        toastStore.show(warning, "info");
+      }
+      const text = JSON.stringify(parsed.data);
+      setPendingOpen({
+        text,
+        fileName: file.name,
+        sizeBytes: file.size,
+        nativeHandle: null,
+        validation: { data: parsed.data, error: null },
+      });
+    } finally {
+      e.target.value = "";
+    }
+  }, []);
 
   const handleModelFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -474,25 +617,131 @@ export function TopBar({ onHelp }: TopBarProps) {
     }
   }, []);
 
-  const commandActions = useMemo(() => (
-    createCommandPaletteActions({
-      onNewProject: handleNew,
-      onSaveProject: () => { void handleSave(); },
-      onExportProject: handleExport,
-      onImportProject: handleImport,
-      onTogglePlayback: () => dispatchViewportShortcut(" "),
-      onFrameSelected: () => dispatchViewportShortcut("f"),
-      onToggleGrid: () => dispatchViewportShortcut("g"),
-    })
-  ), [handleExport, handleImport, handleNew, handleSave]);
+  const handleRunSoakTest = useCallback(async () => {
+    if (soakRunning) return;
+    const controller = new AbortController();
+    soakAbortRef.current = controller;
+    setSoakRunning(true);
+    setSoakStatus("Starting soak test...");
+
+    try {
+      const summary = await runSoakTest({
+        durationMs: 5 * 60 * 1000,
+        intervalMs: 1000,
+        signal: controller.signal,
+        onProgress(progress, stats, assetsCount) {
+          setSoakStatus(
+            `Iter ${progress.iterations} · keys ${progress.keyframeOps} · scrub ${progress.scrubOps} · bytes ${progress.bytesSerialized} · assets ${assetsCount} · draws ${stats.drawCalls} geo ${stats.geometries} tex ${stats.textures}`,
+          );
+        },
+      });
+      setSoakStatus(
+        `Done: iterations=${summary.progress.iterations}, failures=${summary.progress.failures}, assets=${summary.assetsRemaining}, drawCalls=${summary.rendererStats.drawCalls}, geo=${summary.rendererStats.geometries}, tex=${summary.rendererStats.textures}`,
+      );
+      toastStore.show("Soak test completed", "success");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setSoakStatus("Soak test canceled");
+        toastStore.show("Soak test canceled", "info");
+      } else {
+        setSoakStatus("Soak test failed");
+        toastStore.show("Soak test failed", "error");
+      }
+    } finally {
+      soakAbortRef.current = null;
+      setSoakRunning(false);
+    }
+  }, [soakRunning]);
+
+  const handleCancelSoakTest = useCallback(() => {
+    soakAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    return commandBus.subscribe(() => {
+      setCommandRevision((value) => value + 1);
+    });
+  }, []);
+
+  useEffect(() => {
+    const unregister = [
+      commandBus.register({
+        id: "project.new",
+        title: "New Project",
+        category: "Project",
+        shortcutLabel: "N",
+        keywords: ["new", "scene"],
+        run: handleNew,
+      }),
+      commandBus.register({
+        id: "project.save",
+        title: "Save Project",
+        category: "Project",
+        shortcutLabel: "Ctrl+S",
+        keywords: ["save", "persist"],
+        run: () => { void handleSave(); },
+      }),
+      commandBus.register({
+        id: "project.export",
+        title: "Export Project JSON",
+        category: "Project",
+        keywords: ["export", "json", "download"],
+        run: handleExport,
+      }),
+      commandBus.register({
+        id: "project.exportVideo",
+        title: "Export Video",
+        category: "Project",
+        keywords: ["export", "mp4", "gif", "video"],
+        run: handleOpenVideoExport,
+      }),
+      commandBus.register({
+        id: "project.import",
+        title: "Import Project JSON",
+        category: "Project",
+        keywords: ["import", "json", "open"],
+        run: handleImport,
+      }),
+      commandBus.register({
+        id: "project.importBundle",
+        title: "Import Bundle ZIP",
+        category: "Project",
+        keywords: ["import", "bundle", "zip"],
+        run: handleImportBundle,
+      }),
+      commandBus.register({
+        id: "project.insertDemoModel",
+        title: "Insert Demo Model",
+        category: "Project",
+        keywords: ["demo", "model", "glb", "asset"],
+        run: () => { void handleInsertDemoModel(); },
+      }),
+      commandBus.register({
+        id: "project.open",
+        title: "Open Project",
+        category: "Project",
+        keywords: ["open", "file"],
+        run: () => { void handleOpenNative(); },
+      }),
+    ];
+    return () => unregister.forEach((dispose) => dispose());
+  }, [handleExport, handleImport, handleImportBundle, handleInsertDemoModel, handleNew, handleOpenNative, handleOpenVideoExport, handleSave]);
 
   const filteredCommandActions = useMemo(
-    () => filterCommandPaletteActions(commandActions, commandQuery),
-    [commandActions, commandQuery],
+    () => {
+      void commandRevision;
+      return commandBus.filter(commandQuery);
+    },
+    [commandQuery, commandRevision],
   );
 
-  const executeCommandAction = useCallback((action: CommandPaletteAction) => {
-    action.run();
+  const videoExportErrors = useMemo(
+    () => validateVideoExportSettings(videoExportSettings),
+    [videoExportSettings],
+  );
+
+  const executeCommandAction = useCallback((commandId: string) => {
+    commandBus.execute(commandId, { respectInputFocus: false });
     setCommandPaletteOpen(false);
     setCommandQuery("");
     setCommandActiveIndex(0);
@@ -540,29 +789,62 @@ export function TopBar({ onHelp }: TopBarProps) {
       </div>
       <nav className="topbar-nav">
         <div className="topbar-nav-group topbar-nav-group--primary">
-          <button className="topbar-btn topbar-btn--primary" onClick={handleNew}>
+          <button
+            className="topbar-btn topbar-btn--primary"
+            onClick={() => commandBus.execute("project.new", { respectInputFocus: false })}
+          >
             New
           </button>
-          <button className="topbar-btn topbar-btn--primary" onClick={() => { void handleSave(); }}>
+          <button
+            className="topbar-btn topbar-btn--primary"
+            onClick={() => commandBus.execute("project.save", { respectInputFocus: false })}
+          >
             Save
           </button>
-          <button className="topbar-btn topbar-btn--primary" onClick={handleExport}>
+          <button
+            className="topbar-btn topbar-btn--primary"
+            onClick={() => commandBus.execute("project.export", { respectInputFocus: false })}
+          >
             Export
+          </button>
+          <button
+            className="topbar-btn topbar-btn--primary"
+            onClick={() => commandBus.execute("project.exportVideo", { respectInputFocus: false })}
+          >
+            Export Video
           </button>
         </div>
 
         <div className="topbar-nav-group">
-          <button className="topbar-btn" onClick={() => { void handleOpenNative(); }}>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("project.open", { respectInputFocus: false })}
+          >
             Open
           </button>
         </div>
 
         <div className="topbar-nav-group topbar-nav-group--secondary">
-          <button className="topbar-btn" onClick={handleImport}>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("project.import", { respectInputFocus: false })}
+          >
             Import
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("project.importBundle", { respectInputFocus: false })}
+          >
+            Import Bundle
           </button>
           <button className="topbar-btn" onClick={handleImportModel}>
             Import Model
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("project.insertDemoModel", { respectInputFocus: false })}
+          >
+            Insert Demo Model
           </button>
           <button className="topbar-btn" onClick={handleExportBundle}>
             Export Bundle
@@ -648,6 +930,9 @@ export function TopBar({ onHelp }: TopBarProps) {
             />
             <span>Use native file access (experimental)</span>
           </label>
+          <div className="topbar-settings-note">
+            Native file handles do not persist across reload.
+          </div>
           {!nativeSupported && (
             <div className="topbar-settings-note">
               Native file access is not supported in this browser. Falling back to upload/download.
@@ -669,6 +954,9 @@ export function TopBar({ onHelp }: TopBarProps) {
               }}
             />
           </label>
+          <div className="topbar-settings-note">
+            Autosave snapshots do not clear the Unsaved badge.
+          </div>
           <label className="topbar-settings-row">
             <input
               type="checkbox"
@@ -677,6 +965,33 @@ export function TopBar({ onHelp }: TopBarProps) {
             />
             <span>Show renderer stats overlay (dev)</span>
           </label>
+          <label className="topbar-settings-row">
+            <input
+              type="checkbox"
+              checked={devToolsEnabled}
+              onChange={(event) => setDevToolsEnabled(event.target.checked)}
+            />
+            <span>Enable Dev Tools</span>
+          </label>
+          {devToolsEnabled && (
+            <div className="topbar-devtools">
+              <button
+                className="topbar-btn"
+                disabled={soakRunning}
+                onClick={() => {
+                  void handleRunSoakTest();
+                }}
+              >
+                Run Soak Test (5 min)
+              </button>
+              {soakRunning && (
+                <button className="topbar-btn" onClick={handleCancelSoakTest}>
+                  Cancel Soak
+                </button>
+              )}
+              {soakStatus && <div className="topbar-settings-note">{soakStatus}</div>}
+            </div>
+          )}
           <div className="topbar-settings-actions">
             <button className="topbar-btn" onClick={() => { void handleSaveAsNative(); }}>
               Save As
@@ -719,7 +1034,7 @@ export function TopBar({ onHelp }: TopBarProps) {
                 event.preventDefault();
                 const selected = filteredCommandActions[commandActiveIndex];
                 if (selected) {
-                  executeCommandAction(selected);
+                  executeCommandAction(selected.id);
                 }
                 return;
               }
@@ -737,12 +1052,145 @@ export function TopBar({ onHelp }: TopBarProps) {
                   key={action.id}
                   className={`topbar-command-item${index === commandActiveIndex ? " is-active" : ""}`}
                   onMouseEnter={() => setCommandActiveIndex(index)}
-                  onClick={() => executeCommandAction(action)}
+                  onClick={() => executeCommandAction(action.id)}
                 >
-                  {action.label}
+                  <span>{action.title}</span>
+                  {action.shortcutLabel && <small>{action.shortcutLabel}</small>}
                 </button>
               ))
             )}
+          </div>
+        </div>
+      )}
+      {videoExportOpen && (
+        <div className="modal-overlay">
+          <div className="modal modal--video-export" role="dialog" aria-modal="true" aria-label="Export Video">
+            <div className="modal-header">
+              <h2>Export Video</h2>
+              <button
+                className="modal-close"
+                onClick={() => {
+                  if (videoExportRunning) return;
+                  setVideoExportOpen(false);
+                }}
+                aria-label="Close"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="modal-body">
+              <section className="modal-section modal-video-grid">
+                <label>
+                  Format
+                  <select
+                    value={videoExportSettings.format}
+                    onChange={(event) => {
+                      const format = event.target.value === "gif" ? "gif" : "mp4";
+                      setVideoExportSettings((prev) => ({ ...prev, format }));
+                    }}
+                    disabled={videoExportRunning}
+                  >
+                    <option value="mp4">MP4</option>
+                    <option value="gif">GIF</option>
+                  </select>
+                </label>
+                <label>
+                  Width
+                  <input
+                    type="number"
+                    min={16}
+                    step={1}
+                    value={videoExportSettings.width}
+                    onChange={(event) => {
+                      setVideoExportSettings((prev) => ({ ...prev, width: Number(event.target.value) }));
+                    }}
+                    disabled={videoExportRunning}
+                  />
+                </label>
+                <label>
+                  Height
+                  <input
+                    type="number"
+                    min={16}
+                    step={1}
+                    value={videoExportSettings.height}
+                    onChange={(event) => {
+                      setVideoExportSettings((prev) => ({ ...prev, height: Number(event.target.value) }));
+                    }}
+                    disabled={videoExportRunning}
+                  />
+                </label>
+                <label>
+                  FPS
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    step={1}
+                    value={videoExportSettings.fps}
+                    onChange={(event) => {
+                      setVideoExportSettings((prev) => ({ ...prev, fps: Number(event.target.value) }));
+                    }}
+                    disabled={videoExportRunning}
+                  />
+                </label>
+                <label>
+                  Duration (s)
+                  <input
+                    type="number"
+                    min={0.1}
+                    max={120}
+                    step={0.1}
+                    value={videoExportSettings.durationSeconds}
+                    onChange={(event) => {
+                      setVideoExportSettings((prev) => ({ ...prev, durationSeconds: Number(event.target.value) }));
+                    }}
+                    disabled={videoExportRunning}
+                  />
+                </label>
+                <label className="modal-video-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={videoExportSettings.transparentBackground}
+                    onChange={(event) => {
+                      setVideoExportSettings((prev) => ({ ...prev, transparentBackground: event.target.checked }));
+                    }}
+                    disabled={videoExportRunning}
+                  />
+                  <span>Transparent background (PNG/GIF only)</span>
+                </label>
+              </section>
+              {videoExportErrors.length > 0 && (
+                <div className="topbar-settings-note">{videoExportErrors[0]}</div>
+              )}
+              {videoExportProgress && (
+                <div className="topbar-settings-note">{videoExportProgress}</div>
+              )}
+              <section className="onboarding-actions">
+                <button
+                  className="topbar-btn"
+                  disabled={videoExportRunning}
+                  onClick={() => setVideoExportOpen(false)}
+                >
+                  Close
+                </button>
+                {!videoExportRunning ? (
+                  <button
+                    className="topbar-btn topbar-btn--primary"
+                    disabled={videoExportErrors.length > 0}
+                    onClick={() => {
+                      void handleStartVideoExport();
+                    }}
+                  >
+                    Start Export
+                  </button>
+                ) : (
+                  <button className="topbar-btn topbar-btn--primary" onClick={handleCancelVideoExport}>
+                    Cancel Export
+                  </button>
+                )}
+              </section>
+            </div>
           </div>
         </div>
       )}
@@ -766,9 +1214,13 @@ export function TopBar({ onHelp }: TopBarProps) {
                 {pendingOpen.validation.data ? (
                   <ul>
                     <li><b>Version:</b> {pendingOpen.validation.data.version}</li>
-                    <li><b>Objects:</b> {pendingOpen.validation.data.objects.length}</li>
+                    <li><b>Objects:</b> {pendingOpen.validation.data.objects.length + (pendingOpen.validation.data.modelInstances?.length ?? 0)}</li>
+                    <li><b>Primitive objects:</b> {pendingOpen.validation.data.objects.length}</li>
                     <li><b>Model instances:</b> {pendingOpen.validation.data.modelInstances?.length ?? 0}</li>
+                    <li><b>Assets:</b> {pendingOpen.validation.data.assets?.length ?? 0}</li>
                     <li><b>Tracks:</b> {pendingOpen.validation.data.animation?.tracks.length ?? 0}</li>
+                    <li><b>Animation duration:</b> {pendingOpen.validation.data.animation?.durationSeconds ?? 0}s</li>
+                    <li><b>Estimated payload:</b> {Math.round(pendingOpen.sizeBytes / 1024)} KB</li>
                   </ul>
                 ) : (
                   <div className="topbar-settings-note">
@@ -793,7 +1245,6 @@ export function TopBar({ onHelp }: TopBarProps) {
         </div>
       )}
       <input
-        id="project-import-input"
         ref={projectFileInputRef}
         type="file"
         accept=".json"
@@ -806,6 +1257,13 @@ export function TopBar({ onHelp }: TopBarProps) {
         accept=".gltf,.glb,model/gltf-binary,model/gltf+json"
         style={{ display: "none" }}
         onChange={handleModelFileChange}
+      />
+      <input
+        ref={bundleFileInputRef}
+        type="file"
+        accept=".zip,application/zip"
+        style={{ display: "none" }}
+        onChange={handleBundleFileChange}
       />
     </header>
   );

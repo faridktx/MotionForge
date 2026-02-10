@@ -38,15 +38,15 @@ function interpolate(a: Keyframe, b: Keyframe, t: number): number {
 
 function applyInterpolation(alpha: number, interpolation: Keyframe["interpolation"]): number {
   if (interpolation === "linear") return alpha;
-  if (interpolation === "easeIn") return alpha * alpha;
+  if (interpolation === "easeIn") return alpha * alpha * alpha;
   if (interpolation === "easeOut") {
     const inv = 1 - alpha;
-    return 1 - inv * inv;
+    return 1 - inv * inv * inv;
   }
   if (interpolation === "easeInOut") {
-    if (alpha < 0.5) return 2 * alpha * alpha;
+    if (alpha < 0.5) return 4 * alpha * alpha * alpha;
     const inv = -2 * alpha + 2;
-    return 1 - (inv * inv) / 2;
+    return 1 - (inv * inv * inv) / 2;
   }
   return alpha;
 }

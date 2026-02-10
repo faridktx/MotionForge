@@ -78,6 +78,16 @@ Backward compatibility is preserved: `v1` and `v2` continue to load.
         ]
       }
     ]
+  },
+  "exportSettings": {
+    "video": {
+      "format": "mp4",
+      "width": 1280,
+      "height": 720,
+      "fps": 30,
+      "durationSeconds": 2,
+      "transparentBackground": false
+    }
   }
 }
 ```
@@ -92,6 +102,7 @@ Backward compatibility is preserved: `v1` and `v2` continue to load.
 | `modelInstances` | array | v3 optional | Scene instances of imported assets |
 | `camera` | object | no | Camera state |
 | `animation` | object | no | Animation clip (`v2+`) |
+| `exportSettings` | object | no | Optional export UI defaults |
 
 ## Primitive object fields (`objects[]`)
 
@@ -156,6 +167,22 @@ Keyframes:
 - `value`: finite number
 - `interpolation`: `linear`, `step`, `easeIn`, `easeOut`, `easeInOut`
 
+## Optional Export Settings Metadata (`exportSettings`)
+
+Projects may include optional export defaults used by the video export modal.
+
+`exportSettings.video`:
+- `format`: `"mp4"` or `"gif"`
+- `width`: positive integer
+- `height`: positive integer
+- `fps`: number in `(0, 60]`
+- `durationSeconds`: number in `(0, 120]`
+- `transparentBackground`: boolean
+
+Compatibility notes:
+- Existing v1/v2/v3 files without `exportSettings` are fully supported.
+- Unknown/invalid export metadata should be ignored rather than failing load.
+
 ## Storage and export
 
 - Local save: `localStorage` key `motionforge_project`.
@@ -166,6 +193,13 @@ Keyframes:
 - Bundle export: zip (`motionforge-bundle.zip`) with:
   - `project.json`
   - `assets/*` (embedded asset bytes when available)
+
+Bundle layout details:
+- `project.json` is required.
+- Embedded asset payloads are emitted under `assets/<assetId>-<sanitizedName>`.
+- External assets are emitted as `assets/<assetId>-<sanitizedName>.external.txt` reference notes.
+- Bundle import reconstructs embedded `assets[*].source.data` from `assets/*` binaries before deserialization.
+- Missing required embedded asset files fail import with a readable error and do not mutate the current scene.
 
 Legacy compatibility:
 - Older localStorage recent payload entries are migrated on first run into IndexedDB, then legacy payload keys are cleaned up.

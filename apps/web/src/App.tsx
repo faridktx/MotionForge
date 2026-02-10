@@ -12,6 +12,7 @@ import type { GizmoMode } from "./lib/three/gizmo/Gizmo.js";
 import { DEMO_PROJECT, hasSeenOnboarding, markOnboardingSeen } from "./lib/project/demoProject.js";
 import { deserializeProject } from "./lib/project/deserialize.js";
 import { toastStore } from "./state/toastStore.js";
+import { fileDialogStore } from "./state/fileDialogStore.js";
 
 function buildInfoLabel(): string {
   const date = new Date(__BUILD_DATE__);
@@ -42,8 +43,10 @@ export function App() {
   }, [markSeen]);
 
   const openProjectPicker = useCallback(() => {
-    const input = document.getElementById("project-import-input") as HTMLInputElement | null;
-    input?.click();
+    const opened = fileDialogStore.openProjectImportDialog();
+    if (!opened) {
+      toastStore.show("Project import dialog is unavailable", "error");
+    }
     markSeen();
   }, [markSeen]);
 

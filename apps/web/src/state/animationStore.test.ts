@@ -221,4 +221,55 @@ describe("animationStore undo and dirty behavior", () => {
     expect(autosaved).toBe(true);
     expect(sceneStore.isDirty()).toBe(true);
   });
+
+  it("moves only selected lane keys when dragging lane-scoped selection", () => {
+    const clip = createEmptyClip(5);
+    addTransformKeyframes(clip, "cube", "position", 1, { x: 2, y: 4, z: 6 });
+    addTransformKeyframes(clip, "cube", "position", 2, { x: 3, y: 5, z: 7 });
+    animationStore.setClip(clip, { markDirty: false });
+    undoStore.clear();
+
+    const moved = animationStore.moveKeyframes(
+      [
+        { objectId: "cube", propertyPath: "position.x", time: 1 },
+        { objectId: "cube", propertyPath: "position.x", time: 2 },
+      ],
+      0.5,
+      { source: "timeline", label: "Move Keyframes" },
+    );
+    expect(moved.map((item) => item.propertyPath)).toEqual(["position.x", "position.x"]);
+    expect(moved.map((item) => item.time)).toEqual([1.5, 2.5]);
+
+    expect(animationStore.getKeyframesForObject("cube", ["position.x"]).map((item) => item.time)).toEqual([1.5, 2.5]);
+    expect(animationStore.getKeyframesForObject("cube", ["position.y"]).map((item) => item.time)).toEqual([1, 2]);
+    expect(animationStore.getKeyframesForObject("cube", ["position.z"]).map((item) => item.time)).toEqual([1, 2]);
+  });
+
+  it("undo/redo restores exact lane keys after lane-scoped move", () => {
+    const clip = createEmptyClip(5);
+    addTransformKeyframes(clip, "cube", "rotation", 0.5, { x: 0.1, y: 0.2, z: 0.3 });
+    addTransformKeyframes(clip, "cube", "rotation", 1.5, { x: 1.1, y: 1.2, z: 1.3 });
+    animationStore.setClip(clip, { markDirty: false });
+    undoStore.clear();
+
+    const beforeX = animationStore.getKeyframesForObject("cube", ["rotation.x"]);
+    const beforeY = animationStore.getKeyframesForObject("cube", ["rotation.y"]);
+
+    animationStore.moveKeyframes(
+      [{ objectId: "cube", propertyPath: "rotation.y", time: 0.5 }],
+      0.4,
+      { source: "timeline", label: "Move Keyframes" },
+    );
+
+    expect(animationStore.getKeyframesForObject("cube", ["rotation.y"]).map((item) => item.time)).toEqual([0.9, 1.5]);
+    expect(animationStore.getKeyframesForObject("cube", ["rotation.x"])).toEqual(beforeX);
+
+    undoStore.undo();
+    expect(animationStore.getKeyframesForObject("cube", ["rotation.x"])).toEqual(beforeX);
+    expect(animationStore.getKeyframesForObject("cube", ["rotation.y"])).toEqual(beforeY);
+
+    undoStore.redo();
+    expect(animationStore.getKeyframesForObject("cube", ["rotation.x"])).toEqual(beforeX);
+    expect(animationStore.getKeyframesForObject("cube", ["rotation.y"]).map((item) => item.time)).toEqual([0.9, 1.5]);
+  });
 });

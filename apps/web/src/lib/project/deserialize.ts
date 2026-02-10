@@ -3,6 +3,7 @@ import { sceneStore } from "../../state/sceneStore.js";
 import { animationStore } from "../../state/animationStore.js";
 import { undoStore } from "../../state/undoStore.js";
 import { assetStore } from "../../state/assetStore.js";
+import { timelineStore } from "../../state/timelineStore.js";
 import { disposeObject } from "../three/disposeObject.js";
 import {
   annotateImportedHierarchy,
@@ -10,6 +11,7 @@ import {
   base64ToArrayBuffer,
   parseGltfFromArrayBuffer,
 } from "../three/importGltf.js";
+import type { Clip } from "@motionforge/engine";
 import type { ProjectAssetData, ProjectData, ProjectObjectData, ProjectModelInstanceData } from "./serialize.js";
 
 function createGeometry(type: ProjectObjectData["geometryType"]): THREE.BufferGeometry {
@@ -59,13 +61,19 @@ function applyPrimitiveMaterial(mesh: THREE.Mesh, objData: ProjectObjectData): v
 }
 
 async function loadModelInstance(
-  scene: THREE.Scene,
   assetsById: Map<string, ProjectAssetData>,
   instance: ProjectModelInstanceData,
-): Promise<THREE.Object3D | null> {
+): Promise<THREE.Object3D> {
   const asset = assetsById.get(instance.assetId);
-  if (!asset || asset.type !== "gltf") return null;
-  if (asset.source.mode !== "embedded") return null;
+  if (!asset) {
+    throw new Error(`Model instance "${instance.name}" references missing asset "${instance.assetId}".`);
+  }
+  if (asset.type !== "gltf") {
+    throw new Error(`Asset "${asset.id}" has unsupported type "${asset.type}".`);
+  }
+  if (asset.source.mode !== "embedded") {
+    throw new Error(`Asset "${asset.id}" must be embedded for web import.`);
+  }
 
   const arrayBuffer = base64ToArrayBuffer(asset.source.data);
   const root = await parseGltfFromArrayBuffer(arrayBuffer);
@@ -79,9 +87,120 @@ async function loadModelInstance(
     applyMaterialOverrides(root, instance.materialOverrides);
   }
 
-  scene.add(root);
-  sceneStore.registerHierarchy(root, { rootId: instance.id });
   return root;
+}
+
+interface StagedObject {
+  id: string;
+  object: THREE.Object3D;
+  isModelRoot: boolean;
+}
+
+interface StagedProjectLoad {
+  objects: StagedObject[];
+  assets: ProjectAssetData[];
+  animation: Clip | null;
+  camera: ProjectData["camera"];
+}
+
+function disposeStagedObjects(staged: StagedObject[]): void {
+  for (const entry of staged) {
+    disposeObject(entry.object);
+  }
+}
+
+async function dryRunDeserializeProject(data: ProjectData): Promise<StagedProjectLoad> {
+  const stagedObjects: StagedObject[] = [];
+  const stagedAssets = structuredClone(data.assets ?? []);
+  const stagedAnimation = data.animation ? structuredClone(data.animation) : null;
+  const stagedCamera = data.camera ? structuredClone(data.camera) : undefined;
+
+  try {
+    for (const objData of data.objects) {
+      const geo = createGeometry(objData.geometryType);
+      const mat = new THREE.MeshStandardMaterial({ color: objData.color });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.name = objData.name;
+      mesh.position.set(...objData.position);
+      mesh.rotation.set(...objData.rotation);
+      mesh.scale.set(...objData.scale);
+      applyPrimitiveMaterial(mesh, objData);
+
+      stagedObjects.push({
+        id: objData.id,
+        object: mesh,
+        isModelRoot: false,
+      });
+    }
+
+    if (data.modelInstances && data.modelInstances.length > 0) {
+      const assetsById = new Map(stagedAssets.map((asset) => [asset.id, asset]));
+      for (const instance of data.modelInstances) {
+        const root = await loadModelInstance(assetsById, instance);
+        stagedObjects.push({
+          id: instance.id,
+          object: root,
+          isModelRoot: true,
+        });
+      }
+    }
+
+    return {
+      objects: stagedObjects,
+      assets: stagedAssets,
+      animation: stagedAnimation,
+      camera: stagedCamera,
+    };
+  } catch (error) {
+    disposeStagedObjects(stagedObjects);
+    throw error;
+  }
+}
+
+function commitStagedProjectLoad(staged: StagedProjectLoad): THREE.Object3D[] {
+  const scene = sceneStore.getScene();
+  if (!scene) {
+    disposeStagedObjects(staged.objects);
+    return [];
+  }
+
+  clearUserObjects();
+  assetStore.replaceAssets(staged.assets);
+
+  const created: THREE.Object3D[] = [];
+  for (const entry of staged.objects) {
+    scene.add(entry.object);
+    if (entry.isModelRoot) {
+      sceneStore.registerHierarchy(entry.object, { rootId: entry.id });
+    } else {
+      sceneStore.registerObject(entry.object, entry.id);
+    }
+    created.push(entry.object);
+  }
+
+  if (staged.camera) {
+    const cam = sceneStore.getCamera();
+    const target = sceneStore.getControlsTarget();
+    if (cam) {
+      cam.position.set(...staged.camera.position);
+      cam.fov = staged.camera.fov;
+      cam.updateProjectionMatrix();
+    }
+    if (target) {
+      target.set(...staged.camera.target);
+    }
+  }
+
+  if (staged.animation) {
+    animationStore.setClip(staged.animation);
+  } else {
+    animationStore.reset();
+  }
+
+  undoStore.clear();
+  timelineStore.clearAllUiState();
+  sceneStore.clearDirty();
+  return created;
 }
 
 /**
@@ -116,67 +235,8 @@ export function createDefaultObjects(): THREE.Mesh[] {
  * Supports v1 (no animation) and v2 (with animation) formats.
  */
 export async function deserializeProject(data: ProjectData): Promise<THREE.Object3D[]> {
-  const scene = sceneStore.getScene();
-  if (!scene) return [];
-
-  clearUserObjects();
-  assetStore.replaceAssets(data.assets ?? []);
-
-  const created: THREE.Object3D[] = [];
-
-  for (const objData of data.objects) {
-    const geo = createGeometry(objData.geometryType);
-    const mat = new THREE.MeshStandardMaterial({ color: objData.color });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.name = objData.name;
-    mesh.position.set(...objData.position);
-    mesh.rotation.set(...objData.rotation);
-    mesh.scale.set(...objData.scale);
-    applyPrimitiveMaterial(mesh, objData);
-
-    scene.add(mesh);
-    sceneStore.registerObject(mesh, objData.id);
-    created.push(mesh);
-  }
-
-  if (data.assets && data.modelInstances) {
-    const assetsById = new Map(data.assets.map((asset) => [asset.id, asset]));
-    for (const instance of data.modelInstances) {
-      try {
-        const root = await loadModelInstance(scene, assetsById, instance);
-        if (root) {
-          created.push(root);
-        }
-      } catch {
-        // Keep loading remaining content if one model fails to deserialize.
-      }
-    }
-  }
-
-  // Restore camera if present
-  if (data.camera) {
-    const cam = sceneStore.getCamera();
-    const target = sceneStore.getControlsTarget();
-    if (cam) {
-      cam.position.set(...data.camera.position);
-      cam.fov = data.camera.fov;
-      cam.updateProjectionMatrix();
-    }
-    if (target) {
-      target.set(...data.camera.target);
-    }
-  }
-
-  // Restore animation (v2) or reset (v1)
-  if (data.animation) {
-    animationStore.setClip(data.animation);
-  } else {
-    animationStore.reset();
-  }
-
-  undoStore.clear();
-  sceneStore.clearDirty();
-  return created;
+  const staged = await dryRunDeserializeProject(data);
+  return commitStagedProjectLoad(staged);
 }
 
 /**
@@ -208,6 +268,7 @@ export function newProject(): THREE.Mesh[] {
 
   animationStore.reset();
   undoStore.clear();
+  timelineStore.clearAllUiState();
   sceneStore.clearDirty();
   return meshes;
 }

@@ -94,6 +94,20 @@ Object3D references are stored in the registry map, but React components receive
 - Redo stack is cleared on any new push
 - `Ctrl+Z` / `Ctrl+Y` (or `Cmd+Z` / `Cmd+Shift+Z` on Mac) trigger undo/redo
 
+## Command Bus
+
+`commandBus.ts` is the central actions registry for product-level commands.
+
+- Each command registers:
+  - `id`
+  - `title`
+  - `category`
+  - optional `shortcutLabel`
+  - optional `isEnabled()`
+  - `run()`
+- TopBar actions, command palette entries, and viewport keyboard shortcuts all execute through this bus.
+- Focus safety: commands invoked from keyboard respect active input/textarea focus by default.
+
 ## Animation System
 
 ### Data model (engine package)
@@ -139,7 +153,27 @@ The timeline is split into a left track list and a right time area:
 
 ### Evaluation
 
-`evaluateClip()` iterates all tracks, evaluates each at the given time using linear interpolation between surrounding keyframes, and returns a map of `objectId -> property -> value`. The viewport's animation tick applies these values directly to Object3D properties.
+`evaluateClip()` iterates all tracks, evaluates each at the given time using the keyframe's interpolation mode (`step`, `linear`, `easeIn`, `easeOut`, `easeInOut`), and returns a map of `objectId -> property -> value`. The viewport's animation tick applies these values directly to Object3D properties.
+
+## Video Export Pipeline
+
+Video export runs entirely on the client:
+
+1. `TopBar` opens an export modal and validates settings (resolution/fps/duration/format).
+2. `videoExport.ts` builds deterministic frame times (`frameIndex -> seconds`) and scrubs the animation store for each frame.
+3. Each frame is captured from the viewport canvas into PNG blobs while yielding back to the event loop to keep UI responsive.
+4. `ffmpeg.wasm` is loaded on demand and encodes the PNG sequence into MP4 (or GIF).
+5. Progress/cancel state is surfaced in the modal; output is downloaded as a file blob.
+
+This flow avoids server rendering and keeps the app web-first.
+
+## Built-in Demo Asset Fixture
+
+MotionForge ships a deterministic built-in model at `apps/web/public/assets/demo-model.glb` for predictable demos and soak runs.
+
+- `insertBuiltInDemoModel()` loads this fixture through the same glTF import path used by user imports.
+- The model is registered in the scene/object registry and added to the asset registry as an embedded asset record.
+- The soak harness periodically imports this same fixture so stress tests are repeatable across machines.
 
 ## Selection Flow
 
@@ -195,21 +229,31 @@ Recent/autosave persistence:
 
 ### Load
 
-1. JSON is parsed from localStorage (or from an imported file)
-2. `clearUserObjects()` removes all registered objects from the scene and disposes them
-3. `deserializeProject()` recreates meshes from the JSON data
-4. Objects are added to the scene and registered in the store
-5. Camera state is restored if present
-6. Imported models (v3) are reconstructed from embedded glTF asset bytes and material overrides
-7. Animation clip is restored (v2/v3) or reset (v1 files without animation)
-8. Asset store is replaced with the project's `assets[]`
-9. Undo stack is cleared
-10. Dirty flag is cleared
+Load is now a two-phase pipeline to avoid partial mutation:
+
+1. Parse and validate JSON (or bundle `project.json`).
+2. **Dry-run stage** (`dryRunDeserializeProject`):
+  - build all primitive objects in memory
+  - reconstruct model instances from embedded assets in memory
+  - prepare staged asset/animation/camera payloads
+  - if any step fails, staged objects are disposed and live scene remains unchanged
+3. **Commit stage** (`commitStagedProjectLoad`), only if dry-run succeeds:
+  - clear live user objects
+  - replace asset store
+  - add/register staged objects
+  - restore camera + animation
+  - clear undo + timeline UI state
+  - clear dirty flag
 
 ### Export
 
 - `downloadProjectJSON()` serializes the project and downloads `.json`.
 - `downloadProjectBundle()` exports a zip with `project.json` and embedded files under `assets/`.
+
+### Bundle import
+
+- `parseProjectBundle()` reads `.zip`, resolves `project.json`, reconstructs embedded asset bytes from `assets/*`, and rejects missing asset payloads with readable errors.
+- Parsed bundle data then goes through the same dry-run load path as JSON imports.
 
 ### Web-native file workflow
 
@@ -268,7 +312,7 @@ On unmount (React `useEffect` cleanup):
 
 ## Keyboard Shortcuts
 
-Shortcuts are bound via a `window.addEventListener("keydown", ...)` inside the viewport effect. They are ignored when an input or textarea element is focused.
+Shortcuts are bound in viewport, but route through `commandBus` commands.
 
 | Key       | Action                                    |
 | --------- | ----------------------------------------- |

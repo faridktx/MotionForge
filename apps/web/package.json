@@ -11,6 +11,8 @@
     "test": "vitest run --environment jsdom"
   },
   "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.10",
+    "@ffmpeg/util": "^0.12.2",
     "@motionforge/engine": "workspace:*",
     "@motionforge/ui": "workspace:*",
     "fflate": "^0.8.2",

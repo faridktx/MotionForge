@@ -111,6 +111,15 @@ Expected: pasted keys preserve relative spacing; nudge moves selected keys by a 
 
 Expected: interpolation changes are undoable and playback curve reflects selected mode (`linear`, `step`, `easeIn`, `easeOut`, `easeInOut`).
 
+### 4d) Export video (60s)
+
+1. Click `Export Video`.
+2. Set `Format: MP4`, `Duration: 2`, `FPS: 30`, `Resolution: 1280x720`.
+3. Start export and wait for completion progress.
+4. Open downloaded file.
+
+Expected: exported MP4 is playable and matches viewport animation.
+
 ### 5) Save/export + refresh/import restore (120s)
 
 1. Click `Save`.
@@ -121,6 +130,14 @@ Expected: interpolation changes are undoable and playback curve reflects selecte
 
 Expected: scene + keyframes are restored both by Load and Import.
 
+### 5a) Built-in demo model command (45s)
+
+1. Open command palette with `Ctrl+K`.
+2. Run `Insert Demo Model`.
+3. Confirm imported model appears in hierarchy and viewport without file picker.
+
+Expected: deterministic built-in GLB is inserted and selected.
+
 ### 5b) glTF model import + bundle export (120s)
 
 1. Click `Import Model` and choose a small `.glb` file.
@@ -130,6 +147,24 @@ Expected: scene + keyframes are restored both by Load and Import.
 5. Click `Save`, refresh tab, then `Load`.
 
 Expected: imported model and edited material values persist after load; bundle zip downloads with `project.json` and `assets/*`.
+
+### 5d) Bundle import roundtrip (60s)
+
+1. After `Export Bundle`, refresh the page.
+2. Click `Import Bundle` and choose the exported zip.
+3. Confirm load review shows counts/version/duration.
+4. Click `Replace Current Scene`.
+
+Expected: imported model + animation + materials restore identically from bundle.
+
+### 5e) Dry-run failure proof (45s)
+
+1. Duplicate an exported bundle and remove one required file from `assets/` (or use an intentionally broken zip).
+2. Attempt `Import Bundle` with the broken file.
+3. Confirm failure toast appears.
+4. Check current scene/timeline remains unchanged.
+
+Expected: failed open/import performs zero live scene mutation.
 
 ### 5c) Asset purge and renderer stats overlay (60s)
 
