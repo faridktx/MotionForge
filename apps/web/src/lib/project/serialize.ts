@@ -1,6 +1,7 @@
 import { sceneStore } from "../../state/sceneStore.js";
 import { animationStore } from "../../state/animationStore.js";
 import type { Clip } from "@motionforge/engine";
+import { validateProjectDataDetailed } from "@motionforge/engine";
 
 export const PROJECT_VERSION = 2;
 const STORAGE_KEY = "motionforge_project";
@@ -24,6 +25,11 @@ export interface ProjectData {
     fov: number;
   };
   animation?: Clip;
+}
+
+export interface ParseProjectResult {
+  data: ProjectData | null;
+  error: string | null;
 }
 
 function detectGeometryType(obj: THREE.Mesh): "box" | "sphere" | "cone" | null {
@@ -95,23 +101,39 @@ export function saveToLocalStorage(): boolean {
   }
 }
 
+export function saveProject(): boolean {
+  const saved = saveToLocalStorage();
+  if (saved) {
+    sceneStore.clearDirty();
+  }
+  return saved;
+}
+
 export function loadFromLocalStorage(): ProjectData | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as ProjectData;
+    const parsed = parseProjectJSONResult(raw);
+    return parsed.data;
   } catch {
     return null;
   }
 }
 
 export function parseProjectJSON(json: string): ProjectData | null {
+  return parseProjectJSONResult(json).data;
+}
+
+export function parseProjectJSONResult(json: string): ParseProjectResult {
   try {
-    const data = JSON.parse(json) as ProjectData;
-    if (!data.version || !Array.isArray(data.objects)) return null;
-    return data;
+    const data = JSON.parse(json) as unknown;
+    const validation = validateProjectDataDetailed(data);
+    if (!validation.valid) {
+      return { data: null, error: validation.error ?? "Project format is invalid." };
+    }
+    return { data: data as ProjectData, error: null };
   } catch {
-    return null;
+    return { data: null, error: "File is not valid JSON." };
   }
 }
 

@@ -1,6 +1,7 @@
 export interface UndoCommand {
   label: string;
-  execute(): void;
+  do?(): void;
+  execute?(): void;
   undo(): void;
 }
 
@@ -16,9 +17,17 @@ function notify() {
   listeners.forEach((fn) => fn());
 }
 
+function executeCommand(cmd: UndoCommand) {
+  if (cmd.do) {
+    cmd.do();
+    return;
+  }
+  cmd.execute?.();
+}
+
 export const undoStore = {
   push(cmd: UndoCommand) {
-    cmd.execute();
+    executeCommand(cmd);
     undoStack.push(cmd);
     if (undoStack.length > MAX_STACK) {
       undoStack.shift();
@@ -48,7 +57,7 @@ export const undoStore = {
   redo() {
     const cmd = redoStack.pop();
     if (!cmd) return;
-    cmd.execute();
+    executeCommand(cmd);
     undoStack.push(cmd);
     notify();
   },

@@ -32,7 +32,23 @@ function interpolate(a: Keyframe, b: Keyframe, t: number): number {
   const dt = b.time - a.time;
   if (dt === 0) return a.value;
   const alpha = (t - a.time) / dt;
-  return a.value + (b.value - a.value) * alpha;
+  const easedAlpha = applyInterpolation(alpha, a.interpolation);
+  return a.value + (b.value - a.value) * easedAlpha;
+}
+
+function applyInterpolation(alpha: number, interpolation: Keyframe["interpolation"]): number {
+  if (interpolation === "linear") return alpha;
+  if (interpolation === "easeIn") return alpha * alpha;
+  if (interpolation === "easeOut") {
+    const inv = 1 - alpha;
+    return 1 - inv * inv;
+  }
+  if (interpolation === "easeInOut") {
+    if (alpha < 0.5) return 2 * alpha * alpha;
+    const inv = -2 * alpha + 2;
+    return 1 - (inv * inv) / 2;
+  }
+  return alpha;
 }
 
 /**

@@ -7,6 +7,7 @@ MotionForge projects are stored as JSON files. This document describes the schem
 Current version: `2`
 
 The `version` field must be present at the top level. v1 files (without animation data) are loaded with full backward compatibility.
+Phase 4 editing features (track-row timeline, keyframe selection/move/delete/edit) do not change the JSON schema and remain v2-compatible.
 
 ## Schema
 
@@ -95,7 +96,7 @@ The `version` field must be present at the top level. v1 files (without animatio
 | --------------- | ------ | ------------------------------------- |
 | `time`          | number | Time in seconds                       |
 | `value`         | number | Property value at this time           |
-| `interpolation` | string | `"linear"` or `"step"`               |
+| `interpolation` | string | `"linear"`, `"step"`, `"easeIn"`, `"easeOut"`, or `"easeInOut"` |
 
 ## Storage
 
@@ -106,6 +107,7 @@ The `version` field must be present at the top level. v1 files (without animatio
 ## Backward compatibility
 
 v1 files (version 1, no `animation` field) are fully supported. When loading a v1 file, the animation clip is reset to an empty 5-second clip.
+v2 files saved before Phase 4 remain valid; no migration is required.
 
 ## Supported geometry types
 
@@ -118,4 +120,18 @@ Future phases will add mesh import and custom geometry support.
 
 ## Validation
 
-The `@motionforge/engine` package exports a `validateProjectData()` function that checks a parsed JSON object against this schema at runtime, including optional animation validation for v2 data.
+The `@motionforge/engine` package exports:
+
+- `validateProjectData()` for boolean validation checks.
+- `validateProjectDataDetailed()` for user-facing error reasons.
+
+Validation rules include:
+
+- `version` must be finite and supported (`1` or `2`).
+- Numeric vectors (`position/rotation/scale`, camera fields) must be finite numbers.
+- `animation.durationSeconds` must be finite and within `(0, 3600]`.
+- Keyframe `time` must satisfy `0 <= time <= durationSeconds`.
+- Keyframe `value` must be finite.
+- Interpolation must be one of `linear`, `step`, `easeIn`, `easeOut`, `easeInOut`.
+
+On import, invalid files are rejected with a human-readable error toast and the current scene stays unchanged.

@@ -19,7 +19,7 @@ const AXIS_COLORS = {
 
 /**
  * Simple transform gizmo using Three.js primitives.
- * Supports translate and rotate modes.
+ * Rotation is world-axis locked (X/Y/Z ring rotates around world X/Y/Z).
  */
 export class Gizmo {
   readonly root = new THREE.Group();
@@ -39,9 +39,14 @@ export class Gizmo {
   private activeAxis: "x" | "y" | "z" | null = null;
   private dragStartWorldPos = new THREE.Vector3();
   private dragStartObjPos = new THREE.Vector3();
-  private dragStartObjRot = new THREE.Euler();
+  private dragStartObjQuat = new THREE.Quaternion();
   private dragStartObjScale = new THREE.Vector3();
-  private dragStartAngle = 0;
+  private dragRotatePlaneNormal = new THREE.Vector3();
+  private dragStartRotateVector = new THREE.Vector3();
+  private dragAxisWorld = new THREE.Vector3();
+  private tmpVecA = new THREE.Vector3();
+  private tmpVecB = new THREE.Vector3();
+  private tmpCamPos = new THREE.Vector3();
 
   // Bound handlers
   private _onPointerDown: (e: PointerEvent) => void;
@@ -173,6 +178,11 @@ export class Gizmo {
   syncPosition() {
     if (!this.target) return;
     this.root.position.copy(this.target.position);
+
+    this.camera.getWorldPosition(this.tmpCamPos);
+    const distance = this.tmpCamPos.distanceTo(this.root.position);
+    const scale = THREE.MathUtils.clamp(distance * 0.18, 0.35, 2.75);
+    this.root.scale.setScalar(scale);
   }
 
   isDragging(): boolean {
@@ -197,10 +207,8 @@ export class Gizmo {
     const axis = parts[2] as "x" | "y" | "z";
     if (!axis) return;
 
-    this.dragging = true;
-    this.activeAxis = axis;
     this.dragStartObjPos.copy(this.target.position);
-    this.dragStartObjRot.copy(this.target.rotation);
+    this.dragStartObjQuat.copy(this.target.quaternion);
     this.dragStartObjScale.copy(this.target.scale);
 
     if (this.mode === "translate" || this.mode === "scale") {
@@ -208,11 +216,32 @@ export class Gizmo {
       this.camera.getWorldDirection(camDir);
       const planeNormal = getAxisPlaneNormal(axis, camDir);
       const hit = projectOntoPlane(e, this.camera, this.canvas, this.target.position, planeNormal);
-      if (hit) this.dragStartWorldPos.copy(hit);
+      if (!hit) return;
+      this.dragStartWorldPos.copy(hit);
     } else if (this.mode === "rotate") {
-      this.dragStartAngle = this.getRotateAngle(e);
+      this.dragAxisWorld.set(
+        axis === "x" ? 1 : 0,
+        axis === "y" ? 1 : 0,
+        axis === "z" ? 1 : 0,
+      ).normalize();
+      this.dragRotatePlaneNormal.copy(this.dragAxisWorld);
+
+      const hit = projectOntoPlane(
+        e,
+        this.camera,
+        this.canvas,
+        this.dragStartObjPos,
+        this.dragRotatePlaneNormal,
+      );
+      if (!hit) return;
+
+      this.dragStartRotateVector.copy(hit).sub(this.dragStartObjPos);
+      if (this.dragStartRotateVector.lengthSq() < 1e-10) return;
+      this.dragStartRotateVector.normalize();
     }
 
+    this.dragging = true;
+    this.activeAxis = axis;
     this.callbacks.onDragStart?.();
     e.stopPropagation();
   }
@@ -234,10 +263,27 @@ export class Gizmo {
       this.target.position.copy(this.dragStartObjPos);
       this.target.position.setComponent(axisIdx, this.dragStartObjPos.getComponent(axisIdx) + axisDelta);
     } else if (this.mode === "rotate") {
-      const angle = this.getRotateAngle(e);
-      const delta = angle - this.dragStartAngle;
-      this.target.rotation.copy(this.dragStartObjRot);
-      this.target.rotation[this.activeAxis] = this.dragStartObjRot[this.activeAxis] + delta;
+      const hit = projectOntoPlane(
+        e,
+        this.camera,
+        this.canvas,
+        this.dragStartObjPos,
+        this.dragRotatePlaneNormal,
+      );
+      if (!hit) return;
+
+      this.tmpVecA.copy(hit).sub(this.dragStartObjPos);
+      if (this.tmpVecA.lengthSq() < 1e-10) return;
+      this.tmpVecA.normalize();
+
+      this.tmpVecB.crossVectors(this.dragStartRotateVector, this.tmpVecA);
+      const sin = this.tmpVecB.dot(this.dragAxisWorld);
+      const cos = this.dragStartRotateVector.dot(this.tmpVecA);
+      const angle = Math.atan2(sin, cos);
+      const deltaQuat = new THREE.Quaternion().setFromAxisAngle(this.dragAxisWorld, angle);
+
+      this.target.quaternion.copy(this.dragStartObjQuat);
+      this.target.quaternion.premultiply(deltaQuat);
     } else if (this.mode === "scale") {
       const camDir = new THREE.Vector3();
       this.camera.getWorldDirection(camDir);
@@ -268,24 +314,12 @@ export class Gizmo {
   cancelDrag() {
     if (!this.dragging || !this.target) return;
     this.target.position.copy(this.dragStartObjPos);
-    this.target.rotation.copy(this.dragStartObjRot);
+    this.target.quaternion.copy(this.dragStartObjQuat);
     this.target.scale.copy(this.dragStartObjScale);
     this.dragging = false;
     this.activeAxis = null;
     this.syncPosition();
     this.callbacks.onCancel?.();
-  }
-
-  private getRotateAngle(e: PointerEvent): number {
-    if (!this.target) return 0;
-    // Project object center to screen, compute angle from that
-    const center = this.target.position.clone().project(this.camera);
-    const rect = this.canvas.getBoundingClientRect();
-    const cx = ((center.x + 1) / 2) * rect.width;
-    const cy = ((-center.y + 1) / 2) * rect.height;
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    return Math.atan2(my - cy, mx - cx);
   }
 
   dispose() {

@@ -1,4 +1,4 @@
-export type Interpolation = "linear" | "step";
+export type Interpolation = "linear" | "step" | "easeIn" | "easeOut" | "easeInOut";
 
 export interface Keyframe {
   time: number;

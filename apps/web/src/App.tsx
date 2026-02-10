@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { Panel } from "@motionforge/ui";
-import { Viewport, onGizmoModeChange } from "./components/Viewport.js";
+import { Viewport } from "./components/Viewport.js";
 import { InspectorContent } from "./components/InspectorContent.js";
 import { HierarchyContent } from "./components/HierarchyContent.js";
 import { TopBar } from "./components/TopBar.js";
@@ -13,11 +13,7 @@ export function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
   const closeHelp = useCallback(() => setHelpOpen(false), []);
-
-  useEffect(() => {
-    onGizmoModeChange((mode) => setGizmoMode(mode));
-    return () => onGizmoModeChange(null);
-  }, []);
+  const modeLabel = gizmoMode === "translate" ? "Translate (W)" : gizmoMode === "rotate" ? "Rotate (E)" : "Scale (R)";
 
   return (
     <div className="app-shell">
@@ -31,8 +27,8 @@ export function App() {
         </div>
 
         <div className="viewport">
-          <div className="mode-indicator">{gizmoMode.charAt(0).toUpperCase() + gizmoMode.slice(1)}</div>
-          <Viewport />
+          <div className="mode-indicator">{modeLabel}</div>
+          <Viewport onModeChange={setGizmoMode} />
         </div>
 
         <div className="sidebar-right">

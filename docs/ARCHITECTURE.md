@@ -20,7 +20,7 @@ The viewport is a single React component (`Viewport.tsx`) that owns the entire T
 
 Each frame:
 1. `controls.update()` (handles damping)
-2. `gizmo.syncPosition()` (keeps gizmo at target object's position)
+2. `gizmo.syncPosition()` (keeps gizmo at target object and auto-scales by camera distance)
 3. `renderer.render(scene, camera)`
 
 No React state is read or written during the loop.
@@ -39,7 +39,7 @@ The gizmo is a custom implementation using Three.js primitives (no external libr
 
 1. Pointer down on a gizmo handle triggers `pickGizmoHandle()`
 2. OrbitControls are disabled for the duration of the drag
-3. Start position/rotation/scale are captured for undo
+3. Start position/quaternion/scale are captured for undo/cancel
 4. Pointer move projects onto the appropriate constraint plane and updates the target object
 5. Pointer up re-enables controls and pushes an undo command with start/end transforms
 6. Escape during drag cancels and restores the start transform
@@ -47,7 +47,7 @@ The gizmo is a custom implementation using Three.js primitives (no external libr
 ### Modes
 
 - **Translate** (W): Arrow handles with cone tips, constrained to single axis
-- **Rotate** (E): Torus handles, screen-space angle computation
+- **Rotate** (E): Torus handles, world-axis-locked rotation using ray-plane intersection and quaternion delta
 - **Scale** (R): Arrow handles with cube tips, axis-constrained scaling
 
 ## Scene Store
@@ -86,8 +86,8 @@ Object3D references are stored in the registry map, but React components receive
 
 `undoStore.ts` implements a command-stack pattern:
 
-- Each action is an `UndoCommand` with `execute()` and `undo()` closures
-- `push(cmd)` executes then pushes; `pushExecuted(cmd)` pushes without executing (for gizmo drags that happen in real-time)
+- Each action is an `UndoCommand` with `do()` and `undo()` closures (legacy `execute()` is still supported for backward compatibility)
+- `push(cmd)` runs `do()` and pushes; `pushExecuted(cmd)` pushes without re-running (used for gizmo drags that are already applied live)
 - Maximum stack depth of 100 commands
 - Redo stack is cleared on any new push
 - `Ctrl+Z` / `Ctrl+Y` (or `Cmd+Z` / `Cmd+Shift+Z` on Mac) trigger undo/redo
@@ -105,9 +105,31 @@ Object3D references are stored in the registry map, but React components receive
 `animationStore.ts` manages the active clip, playback state, and current time:
 
 - **Playback**: `play()` / `pause()` / `togglePlayback()` use `requestAnimationFrame` for tick loop
-- **Scrubbing**: `scrubTo(t)` evaluates the clip at time `t` and applies values to scene objects
-- **Keyframing**: `addKeyframesForSelected(property)` captures the current transform values as keyframes at the current time
+- **Scrubbing**: `scrubTo(t)` evaluates the clip at time `t` and applies values to scene objects without creating undo commands
+- **Duration edits**: `setDuration()` is undoable and normalizes/clamps clip data
+- **Keyframing**:
+  - `addKeyframesForSelected(property)` inserts axis keyframes for one transform group as one undoable command
+  - `addAllKeyframesForSelected()` (K shortcut) inserts position/rotation/scale keyframes as one undoable command
+- **Keyframe CRUD**: remove, move, value edits, interpolation edits, and single-key time edits all go through undoable clip commands
 - **Channels**: `time` (current time changes), `playback` (play/pause), `keyframes` (keyframe added/removed)
+
+## Timeline v2
+
+The timeline is split into a left track list and a right time area:
+
+- **Rows**: object groups for all animated objects, with nested property sections (`Position`, `Rotation`, `Scale`) and per-axis lanes (`X`, `Y`, `Z`). Non-selected objects are collapsed by default; selected object auto-expands.
+- **Visibility**: per-object eye toggle hides track rows from timeline view (UI-only; data unchanged).
+- **Markers**: Per-axis key diamonds in each row, with selected-key highlighting
+- **Interactions**:
+  - Click empty ruler/lane to scrub
+  - Click key to select, `Shift+Click` to toggle multi-select
+  - Drag a marquee rectangle in lane area to box-select keyframes
+  - Drag selected keys horizontally to move in time (snap 0.1s by default, hold `Alt` to disable)
+  - `Ctrl+C` / `Ctrl+V` copies and pastes selected keys at playhead while preserving relative offsets
+  - `Alt+ArrowLeft` / `Alt+ArrowRight` nudges selected keys by small time increments
+  - `Delete` / `Backspace` or trash button removes selected keys
+- **Editing panel**: Single selected key supports editing time, value, and interpolation (`linear`/`step`), all undoable
+- **Zoom**: `pixelsPerSecond` is stored in `timelineStore` and controlled by slider or `Ctrl+Wheel`
 
 ### Evaluation
 
@@ -201,11 +223,13 @@ Shortcuts are bound via a `window.addEventListener("keydown", ...)` inside the v
 | W         | Translate mode                            |
 | E         | Rotate mode                               |
 | R         | Scale mode                                |
-| K         | Insert keyframe for selected object       |
+| K         | Insert transform keyframes for selected object |
 | Space     | Play / pause animation                    |
 | F         | Frame selected object (or reset to origin)|
 | Shift+F   | Frame all selectable objects              |
 | G         | Toggle grid and axes visibility           |
 | Esc       | Cancel gizmo drag / clear selection       |
+| Delete    | Delete selected timeline keyframes        |
+| Ctrl+Wheel| Timeline zoom (when pointer is over timeline) |
 | Ctrl+Z    | Undo                                      |
 | Ctrl+Y    | Redo                                      |

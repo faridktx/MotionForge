@@ -1,13 +1,12 @@
 import { useRef, useCallback } from "react";
 import { useDirtyState } from "../state/useScene.js";
 import {
-  saveToLocalStorage,
+  saveProject,
   loadFromLocalStorage,
-  parseProjectJSON,
+  parseProjectJSONResult,
   downloadProjectJSON,
 } from "../lib/project/serialize.js";
 import { deserializeProject, newProject } from "../lib/project/deserialize.js";
-import { sceneStore } from "../state/sceneStore.js";
 import { toastStore } from "../state/toastStore.js";
 
 interface TopBarProps {
@@ -19,9 +18,8 @@ export function TopBar({ onHelp }: TopBarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = useCallback(() => {
-    const ok = saveToLocalStorage();
+    const ok = saveProject();
     if (ok) {
-      sceneStore.clearDirty();
       toastStore.show("Project saved", "success");
     } else {
       toastStore.show("Failed to save project", "error");
@@ -58,12 +56,13 @@ export function TopBar({ onHelp }: TopBarProps) {
     const reader = new FileReader();
     reader.onload = () => {
       const text = reader.result as string;
-      const data = parseProjectJSON(text);
+      const parsed = parseProjectJSONResult(text);
+      const data = parsed.data;
       if (data) {
         deserializeProject(data);
         toastStore.show("Project imported", "success");
       } else {
-        toastStore.show("Invalid project file", "error");
+        toastStore.show(parsed.error ? `Import failed: ${parsed.error}` : "Import failed", "error");
       }
     };
     reader.readAsText(file);
@@ -78,10 +77,10 @@ export function TopBar({ onHelp }: TopBarProps) {
         {dirty && <span className="topbar-badge">Unsaved</span>}
       </div>
       <nav className="topbar-nav">
-        <button className="topbar-btn" onClick={handleNew}>
+        <button className="topbar-btn topbar-btn--primary" onClick={handleNew}>
           New
         </button>
-        <button className="topbar-btn" onClick={handleSave}>
+        <button className="topbar-btn topbar-btn--primary" onClick={handleSave}>
           Save
         </button>
         <button className="topbar-btn" onClick={handleLoad}>
@@ -90,7 +89,7 @@ export function TopBar({ onHelp }: TopBarProps) {
         <button className="topbar-btn" onClick={handleImport}>
           Import
         </button>
-        <button className="topbar-btn" onClick={handleExport}>
+        <button className="topbar-btn topbar-btn--primary" onClick={handleExport}>
           Export
         </button>
         <button className="topbar-btn" onClick={onHelp}>

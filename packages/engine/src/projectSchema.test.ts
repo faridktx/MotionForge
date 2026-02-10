@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateProjectData } from "./projectSchema.js";
+import { validateProjectData, validateProjectDataDetailed } from "./projectSchema.js";
 
 const VALID_PROJECT = {
   version: 1,
@@ -128,5 +128,102 @@ describe("validateProjectData", () => {
       },
     };
     expect(validateProjectData(bad)).toBe(false);
+  });
+
+  it("accepts supported easing interpolation values", () => {
+    const valid = {
+      version: 2,
+      objects: [],
+      animation: {
+        durationSeconds: 5,
+        tracks: [
+          {
+            objectId: "obj_1",
+            property: "position.x",
+            keyframes: [
+              { time: 0, value: 0, interpolation: "easeIn" },
+              { time: 1, value: 1, interpolation: "easeOut" },
+              { time: 2, value: 2, interpolation: "easeInOut" },
+            ],
+          },
+        ],
+      },
+    };
+    expect(validateProjectData(valid)).toBe(true);
+  });
+
+  it("rejects unsupported version", () => {
+    expect(validateProjectData({ version: 3, objects: [] })).toBe(false);
+  });
+
+  it("rejects non-finite keyframe values", () => {
+    const bad = {
+      version: 2,
+      objects: [],
+      animation: {
+        durationSeconds: 5,
+        tracks: [
+          {
+            objectId: "obj_1",
+            property: "position.x",
+            keyframes: [{ time: 1, value: Number.NaN, interpolation: "linear" }],
+          },
+        ],
+      },
+    };
+    expect(validateProjectData(bad)).toBe(false);
+  });
+
+  it("rejects keyframe times less than zero", () => {
+    const bad = {
+      version: 2,
+      objects: [],
+      animation: {
+        durationSeconds: 5,
+        tracks: [
+          {
+            objectId: "obj_1",
+            property: "position.x",
+            keyframes: [{ time: -0.1, value: 0, interpolation: "linear" }],
+          },
+        ],
+      },
+    };
+    expect(validateProjectData(bad)).toBe(false);
+  });
+
+  it("rejects keyframe times greater than clip duration", () => {
+    const bad = {
+      version: 2,
+      objects: [],
+      animation: {
+        durationSeconds: 2,
+        tracks: [
+          {
+            objectId: "obj_1",
+            property: "position.x",
+            keyframes: [{ time: 3, value: 0, interpolation: "linear" }],
+          },
+        ],
+      },
+    };
+    expect(validateProjectData(bad)).toBe(false);
+  });
+
+  it("rejects animation when durationSeconds is missing", () => {
+    const bad = {
+      version: 2,
+      objects: [],
+      animation: {
+        tracks: [],
+      },
+    };
+    expect(validateProjectData(bad)).toBe(false);
+  });
+
+  it("returns a readable validation error", () => {
+    const result = validateProjectDataDetailed({ version: 9, objects: [] });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("unsupported project version");
   });
 });

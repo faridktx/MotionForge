@@ -55,6 +55,43 @@ describe("evaluateTrack", () => {
     expect(evaluateTrack(t, 1)).toBe(0); // step holds first value
   });
 
+  it("handles easeIn interpolation", () => {
+    const t: Track = {
+      objectId: "obj_1",
+      property: "position.x",
+      keyframes: [
+        { time: 0, value: 0, interpolation: "easeIn" },
+        { time: 2, value: 10, interpolation: "linear" },
+      ],
+    };
+    expect(evaluateTrack(t, 1)).toBeCloseTo(2.5);
+  });
+
+  it("handles easeOut interpolation", () => {
+    const t: Track = {
+      objectId: "obj_1",
+      property: "position.x",
+      keyframes: [
+        { time: 0, value: 0, interpolation: "easeOut" },
+        { time: 2, value: 10, interpolation: "linear" },
+      ],
+    };
+    expect(evaluateTrack(t, 1)).toBeCloseTo(7.5);
+  });
+
+  it("handles easeInOut interpolation", () => {
+    const t: Track = {
+      objectId: "obj_1",
+      property: "position.x",
+      keyframes: [
+        { time: 0, value: 0, interpolation: "easeInOut" },
+        { time: 2, value: 10, interpolation: "linear" },
+      ],
+    };
+    expect(evaluateTrack(t, 0.5)).toBeCloseTo(1.25);
+    expect(evaluateTrack(t, 1.5)).toBeCloseTo(8.75);
+  });
+
   it("returns exact value at keyframe time", () => {
     const t = makeTrack([{ time: 0, value: 0 }, { time: 1, value: 10 }, { time: 2, value: 5 }]);
     expect(evaluateTrack(t, 1)).toBe(10);

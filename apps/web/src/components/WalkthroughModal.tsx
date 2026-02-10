@@ -59,7 +59,7 @@ export function WalkthroughModal({ open, onClose }: WalkthroughModalProps) {
                 <tr><td><kbd>W</kbd></td><td>Translate mode</td></tr>
                 <tr><td><kbd>E</kbd></td><td>Rotate mode</td></tr>
                 <tr><td><kbd>R</kbd></td><td>Scale mode</td></tr>
-                <tr><td><kbd>Esc</kbd></td><td>Cancel drag / clear selection</td></tr>
+                <tr><td><kbd>Esc</kbd></td><td>Cancel active gizmo drag, otherwise clear selection</td></tr>
               </tbody>
             </table>
           </section>
@@ -68,8 +68,9 @@ export function WalkthroughModal({ open, onClose }: WalkthroughModalProps) {
             <h3>Animation</h3>
             <table className="shortcut-table">
               <tbody>
-                <tr><td><kbd>K</kbd></td><td>Insert keyframe for selected object</td></tr>
+                <tr><td><kbd>K</kbd></td><td>Insert transform keyframes (position/rotation/scale) for selected object</td></tr>
                 <tr><td><kbd>Space</kbd></td><td>Play / pause animation</td></tr>
+                <tr><td><kbd>Delete</kbd></td><td>Delete selected timeline keyframes</td></tr>
               </tbody>
             </table>
           </section>
@@ -83,8 +84,18 @@ export function WalkthroughModal({ open, onClose }: WalkthroughModalProps) {
                 <tr><td><kbd>G</kbd></td><td>Toggle grid and axes</td></tr>
                 <tr><td><kbd>Ctrl+Z</kbd></td><td>Undo</td></tr>
                 <tr><td><kbd>Ctrl+Y</kbd></td><td>Redo</td></tr>
+                <tr><td><kbd>Ctrl+Wheel</kbd></td><td>Zoom timeline scale (while hovering timeline)</td></tr>
               </tbody>
             </table>
+          </section>
+
+          <section className="modal-section">
+            <h3>Troubleshooting</h3>
+            <ul>
+              <li><b>Selection does not work:</b> click the object body (not gizmo), or select from Hierarchy.</li>
+              <li><b>Keyframes not visible:</b> ensure an object is selected and timeline zoom is not too wide.</li>
+              <li><b>Playback does nothing:</b> add at least two keys with different values/times, then press Space.</li>
+            </ul>
           </section>
         </div>
       </div>

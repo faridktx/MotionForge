@@ -42,6 +42,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 | `E`       | Rotate mode                               |
 | `R`       | Scale mode                                |
 | `K`       | Insert keyframe (all properties)          |
+| `Delete`  | Delete selected keyframes in timeline     |
 | `Space`   | Play / pause animation                    |
 | `F`       | Frame selected object (or reset to origin)|
 | `Shift+F` | Frame all objects                         |
@@ -53,18 +54,20 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 ## Animation
 
 1. Select an object and position it at frame 0
-2. Press `K` or click "Key" buttons in the Inspector to record keyframes
+2. Press `K` or click a "Key" button in the Inspector to record keyframes (undoable)
 3. Scrub the timeline to a later time, move the object, press `K` again
 4. Press `Space` to play back the animation
-5. Adjust duration in the timeline panel
+5. Use timeline track rows to select, drag, delete, and edit keyframes
+6. Adjust duration and zoom in the timeline panel
 
-Keyframe markers appear as diamonds on the timeline for the selected object.
+Keyframe markers appear per track row (`Position`, `Rotation`, `Scale`) and support multi-select (`Shift`).
 
 ## Save and Load
 
 - **Save:** Click "Save" in the top bar to persist the project to localStorage.
 - **Load:** Click "Load" to restore the last saved project.
 - **Import:** Click "Import" to load a `.json` project file from disk.
+- Invalid imports are rejected with a readable error and do not overwrite the current project.
 - **Export:** Click "Export" to download the project as a `.json` file.
 - **New:** Click "New" to reset to default objects.
 
@@ -93,5 +96,5 @@ motionforge/
 - **Phase 1** (done): Viewport reliability, selection MVP, keyboard shortcuts, UI polish
 - **Phase 2** (done): Live scene store, editable inspector, hierarchy wiring, save/load
 - **Phase 3** (done): Transform gizmos, keyframe animation, timeline UI, undo/redo, project format v2
-- **Phase 4**: Asset import/export, materials editor
+- **Phase 4** (done): Timeline v2 track rows, keyframe CRUD + undo, axis-locked rotation gizmo, gizmo auto-scale
 - **Phase 5**: Plugin system, collaboration features

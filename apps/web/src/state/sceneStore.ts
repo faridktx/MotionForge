@@ -145,9 +145,11 @@ export const sceneStore = {
 
   // -- Notifications --
 
-  notifyTransformChanged() {
+  notifyTransformChanged(options?: { markDirty?: boolean }) {
     notify("transform");
-    markDirty();
+    if (options?.markDirty !== false) {
+      markDirty();
+    }
   },
 
   notifyObjectsChanged() {

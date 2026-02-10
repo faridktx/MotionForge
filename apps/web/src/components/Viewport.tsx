@@ -10,21 +10,14 @@ import { undoStore } from "../state/undoStore.js";
 import { animationStore } from "../state/animationStore.js";
 import { createDefaultObjects } from "../lib/project/deserialize.js";
 
+interface ViewportProps {
+  onModeChange?: (mode: GizmoMode) => void;
+}
+
 const HIGHLIGHT_EMISSIVE = new THREE.Color(0x335599);
 const DEFAULT_EMISSIVE = new THREE.Color(0x000000);
 
-interface GizmoModeCallback {
-  (mode: GizmoMode): void;
-}
-
-let gizmoModeCallback: GizmoModeCallback | null = null;
-
-/** Called by external components to get gizmo mode updates. */
-export function onGizmoModeChange(cb: GizmoModeCallback | null) {
-  gizmoModeCallback = cb;
-}
-
-export function Viewport() {
+export function Viewport({ onModeChange }: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -92,8 +85,41 @@ export function Viewport() {
 
     // -- Gizmo --
     const dragStartPos = new THREE.Vector3();
-    const dragStartRot = new THREE.Euler();
+    const dragStartQuat = new THREE.Quaternion();
     const dragStartScale = new THREE.Vector3();
+
+    let frameTweenId = 0;
+    function stopFrameTween() {
+      if (frameTweenId !== 0) {
+        cancelAnimationFrame(frameTweenId);
+        frameTweenId = 0;
+      }
+    }
+
+    function smoothFrame(targetPosition: THREE.Vector3, targetLookAt: THREE.Vector3) {
+      stopFrameTween();
+
+      const startPosition = camera.position.clone();
+      const startTarget = controls.target.clone();
+      const durationMs = 250;
+      const startTime = performance.now();
+
+      const step = (now: number) => {
+        const t = Math.min(1, (now - startTime) / durationMs);
+        const eased = 1 - Math.pow(1 - t, 3);
+
+        camera.position.lerpVectors(startPosition, targetPosition, eased);
+        controls.target.lerpVectors(startTarget, targetLookAt, eased);
+
+        if (t < 1) {
+          frameTweenId = requestAnimationFrame(step);
+        } else {
+          frameTweenId = 0;
+        }
+      };
+
+      frameTweenId = requestAnimationFrame(step);
+    }
 
     const gizmo = new Gizmo(camera, renderer.domElement, {
       onDragStart() {
@@ -101,46 +127,58 @@ export function Viewport() {
         const obj = sceneStore.getSelectedObject();
         if (obj) {
           dragStartPos.copy(obj.position);
-          dragStartRot.copy(obj.rotation);
+          dragStartQuat.copy(obj.quaternion);
           dragStartScale.copy(obj.scale);
         }
       },
       onDrag() {
-        sceneStore.notifyTransformChanged();
+        sceneStore.notifyTransformChanged({ markDirty: false });
       },
       onDragEnd() {
         controls.enabled = true;
         const obj = sceneStore.getSelectedObject();
         if (obj) {
           const endPos = obj.position.clone();
-          const endRot = obj.rotation.clone();
+          const endQuat = obj.quaternion.clone();
           const endScale = obj.scale.clone();
           const startP = dragStartPos.clone();
-          const startR = dragStartRot.clone();
+          const startQ = dragStartQuat.clone();
           const startS = dragStartScale.clone();
           const ref = obj;
+
+          const changed =
+            !startP.equals(endPos) ||
+            !startQ.equals(endQuat) ||
+            !startS.equals(endScale);
+          if (!changed) {
+            sceneStore.notifyTransformChanged({ markDirty: false });
+            return;
+          }
+
           undoStore.pushExecuted({
             label: `Gizmo ${gizmo.getMode()}`,
-            execute() {
+            do() {
               ref.position.copy(endPos);
-              ref.rotation.copy(endRot);
+              ref.quaternion.copy(endQuat);
               ref.scale.copy(endScale);
               gizmo.syncPosition();
               sceneStore.notifyTransformChanged();
             },
             undo() {
               ref.position.copy(startP);
-              ref.rotation.copy(startR);
+              ref.quaternion.copy(startQ);
               ref.scale.copy(startS);
               gizmo.syncPosition();
               sceneStore.notifyTransformChanged();
             },
           });
+          sceneStore.markDirty();
+          sceneStore.notifyTransformChanged({ markDirty: false });
         }
       },
       onCancel() {
         controls.enabled = true;
-        sceneStore.notifyTransformChanged();
+        sceneStore.notifyTransformChanged({ markDirty: false });
       },
     });
     scene.add(gizmo.root);
@@ -239,23 +277,24 @@ export function Viewport() {
         }
         case "w": {
           gizmo.setMode("translate");
-          gizmoModeCallback?.("translate");
+          onModeChange?.("translate");
           break;
         }
         case "e": {
           gizmo.setMode("rotate");
-          gizmoModeCallback?.("rotate");
+          onModeChange?.("rotate");
           break;
         }
         case "r": {
           gizmo.setMode("scale");
-          gizmoModeCallback?.("scale");
+          onModeChange?.("scale");
           break;
         }
         case "k": {
-          animationStore.addKeyframesForSelected("position");
-          animationStore.addKeyframesForSelected("rotation");
-          animationStore.addKeyframesForSelected("scale");
+          animationStore.addAllKeyframesForSelected({
+            source: "shortcut",
+            label: "Keyframe Transform",
+          });
           break;
         }
         case "f": {
@@ -264,8 +303,7 @@ export function Viewport() {
             const bs = computeBoundingSphere(selectables);
             if (bs) {
               const framing = frameSphere(bs, camera);
-              camera.position.copy(framing.position);
-              controls.target.copy(framing.target);
+              smoothFrame(framing.position, framing.target);
             }
           } else {
             const sel = sceneStore.getSelectedObject();
@@ -273,12 +311,10 @@ export function Viewport() {
               const bs = computeBoundingSphere([sel]);
               if (bs) {
                 const framing = frameSphere(bs, camera);
-                camera.position.copy(framing.position);
-                controls.target.copy(framing.target);
+                smoothFrame(framing.position, framing.target);
               }
             } else {
-              controls.target.set(0, 0, 0);
-              camera.position.set(4, 3, 4);
+              smoothFrame(new THREE.Vector3(4, 3, 4), new THREE.Vector3(0, 0, 0));
             }
           }
           break;
@@ -330,6 +366,7 @@ export function Viewport() {
       observer.disconnect();
       unsubSelection();
       unsubTransform();
+      stopFrameTween();
       window.removeEventListener("keydown", onKeyDown);
       renderer.domElement.removeEventListener("wheel", preventScroll);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
@@ -342,7 +379,7 @@ export function Viewport() {
         container.removeChild(renderer.domElement);
       }
     };
-  }, []);
+  }, [onModeChange]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }

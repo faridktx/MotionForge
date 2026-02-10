@@ -57,7 +57,7 @@ export function InspectorContent() {
   }, []);
 
   const keyProperty = useCallback((property: "position" | "rotation" | "scale") => {
-    animationStore.addKeyframesForSelected(property);
+    animationStore.addKeyframesForSelected(property, { source: "inspector" });
   }, []);
 
   if (!snap) {
