@@ -7,8 +7,8 @@ pnpm install
 pnpm gate
 pnpm mcp:build
 pnpm -C packages/mcp test -- contract.test.ts
-pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --out .motionforge/release-preview
-pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --out .motionforge/release-apply --confirm
+pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --unity --out .motionforge/release-preview
+pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --unity --out .motionforge/release-apply --confirm
 ```
 
 ## 2) Build production web app

@@ -44,4 +44,47 @@ describe("motionforge CLI", () => {
       await rm(outDir, { recursive: true, force: true });
     }
   });
+
+  it("supports --unity mode and writes bindPath normalization warnings when needed", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "motionforge-cli-unity-"));
+    const inputPath = resolve(process.cwd(), "../../apps/web/public/demo/motionforge-takes-demo.json");
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    try {
+      const exitCode = await runMotionforgeCli(
+        [
+          "make-bundle",
+          "--in",
+          inputPath,
+          "--goal",
+          "idle loop then recoil",
+          "--out",
+          outDir,
+          "--unity",
+          "--confirm",
+        ],
+        {
+          writeStdout: (line) => stdout.push(line),
+          writeStderr: (line) => stderr.push(line),
+        },
+      );
+
+      expect(exitCode).toBe(0);
+      const project = JSON.parse(await readFile(join(outDir, "project.json"), "utf8")) as {
+        animation?: { tracks?: Array<{ bindPath?: string }> };
+      };
+      const tracks = project.animation?.tracks ?? [];
+      expect(tracks.length).toBeGreaterThan(0);
+      expect(tracks.every((track) => typeof track.bindPath === "string" && track.bindPath.length > 0)).toBe(true);
+
+      const proof = JSON.parse(await readFile(join(outDir, "proof.json"), "utf8")) as {
+        warnings: string[];
+      };
+      expect(Array.isArray(proof.warnings)).toBe(true);
+      expect(stdout.join("\n")).toContain("\"ok\": true");
+      expect(stderr).toEqual([]);
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
+    }
+  });
 });

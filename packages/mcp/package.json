@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "tsx src/cli.ts --stdio",
     "motionforge": "tsx src/motionforgeCli.ts",
+    "demo:unity": "tsx src/demoUnity.ts",
     "start": "node --import tsx dist/cli.js --stdio",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",

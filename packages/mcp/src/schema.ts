@@ -140,6 +140,37 @@ export const MfPipelineMakeBundleInputSchema = z.object({
       }),
     )
     .optional(),
+  constraints: z
+    .object({
+      durationSec: z.number().positive().optional(),
+      style: z.string().min(1).optional(),
+      fps: z.number().positive().optional(),
+    })
+    .optional(),
+  target: z
+    .object({
+      select: z.string().min(1).optional(),
+      bindPath: z.string().min(1).optional(),
+    })
+    .optional(),
+  unity: z.boolean().optional(),
+  outDir: z.string().min(1),
+  confirm: z.boolean(),
+});
+
+export const MfUnityRecipeMakeBundleInputSchema = z.object({
+  goal: z.string().min(1),
+  target: z.object({
+    select: z.string().min(1),
+    bindPath: z.string().min(1).optional(),
+  }),
+  constraints: z
+    .object({
+      durationSec: z.number().positive().optional(),
+      style: z.string().min(1).optional(),
+      fps: z.number().positive().optional(),
+    })
+    .optional(),
   outDir: z.string().min(1),
   confirm: z.boolean(),
 });
@@ -168,6 +199,7 @@ export const ToolSchemas = {
   "mf.io.readFileBase64": MfIoReadFileBase64InputSchema,
   "mf.io.writeFile": MfIoWriteFileInputSchema,
   "mf.pipeline.makeBundle": MfPipelineMakeBundleInputSchema,
+  "mf.unity.recipe.makeBundle": MfUnityRecipeMakeBundleInputSchema,
 } as const;
 
 export const ToolDefinitions = [
@@ -308,6 +340,12 @@ export const ToolDefinitions = [
     description: "Deterministic staged pipeline: goal -> script(s) -> preview/apply -> commit -> bundle + proof.",
     input: MfPipelineMakeBundleInputSchema,
     output: "{ ok, outZipPath, manifestPath, proofPath, previewOnly, errors?, warnings? }",
+  },
+  {
+    name: "mf.unity.recipe.makeBundle",
+    description: "Unity-targeted deterministic recipe pipeline with bindPath guarantees.",
+    input: MfUnityRecipeMakeBundleInputSchema,
+    output: "{ ok, outZipPath, proofPath, warnings? }",
   },
 ] as const;
 

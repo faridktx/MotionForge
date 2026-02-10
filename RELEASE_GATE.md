@@ -24,8 +24,8 @@ All of the following must pass before any merge to main.
 ```bash
 pnpm gate
 pnpm mcp:build
-pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --out .motionforge/ci-preview
-pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --out .motionforge/ci-apply --confirm
+pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --unity --out .motionforge/ci-preview
+pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --unity --out .motionforge/ci-apply --confirm
 ```
 
 This runs the following checks in order, stopping on first failure:

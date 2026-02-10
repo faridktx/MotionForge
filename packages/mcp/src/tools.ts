@@ -22,6 +22,7 @@ import {
   MfPlanGenerateInputSchema,
   MfPlanPreviewDiffInputSchema,
   MfPingInputSchema,
+  MfUnityRecipeMakeBundleInputSchema,
   MfProjectCommitInputSchema,
   MfProjectDiscardInputSchema,
   MfProjectLoadJsonInputSchema,
@@ -337,6 +338,27 @@ export function createToolHandlers(runtime: RuntimeInstance, options: RegisterTo
       summary: compileOut.summary,
       warnings: compileOut.warnings,
     };
+  };
+
+  const resolveUnityBindPathForTarget = (select: string, explicitBindPath: string | undefined): string => {
+    if (explicitBindPath && explicitBindPath.trim().length > 0) {
+      return explicitBindPath.trim();
+    }
+    const snapshot = runtime.snapshot();
+    const matchedById = snapshot.scene.objects.find((item) => item.id === select);
+    if (matchedById && matchedById.name.trim().length > 0) {
+      return matchedById.name.trim();
+    }
+    return select;
+  };
+
+  const resolveUnityTargetObjectId = (select: string): string => {
+    const snapshot = runtime.snapshot();
+    const byId = snapshot.scene.objects.find((item) => item.id === select);
+    if (byId) return byId.id;
+    const byName = snapshot.scene.objects.find((item) => item.name === select);
+    if (byName) return byName.id;
+    return select;
   };
 
   const handlers: ToolHandlerMap = {
@@ -785,6 +807,9 @@ export function createToolHandlers(runtime: RuntimeInstance, options: RegisterTo
             inBundleBase64: payload.inBundleBase64,
             goal: payload.goal,
             takes: payload.takes,
+            constraints: payload.constraints,
+            target: payload.target,
+            unity: payload.unity,
             outDir: payload.outDir,
             confirm: payload.confirm,
             staged: true,
@@ -819,6 +844,36 @@ export function createToolHandlers(runtime: RuntimeInstance, options: RegisterTo
         };
       } catch (error) {
         return resolveError(error, "MF_ERR_PIPELINE_MAKE_BUNDLE", "Pipeline make-bundle failed.");
+      }
+    },
+    "mf.unity.recipe.makeBundle": async (input) => {
+      try {
+        const payload = parseInput(MfUnityRecipeMakeBundleInputSchema, input ?? {});
+        const resolvedBindPath = resolveUnityBindPathForTarget(payload.target.select, payload.target.bindPath);
+        const resolvedTargetObjectId = resolveUnityTargetObjectId(payload.target.select);
+        const baseHandler = handlers["mf.pipeline.makeBundle"];
+        const out = await baseHandler({
+          goal: payload.goal,
+          outDir: payload.outDir,
+          confirm: payload.confirm,
+          constraints: payload.constraints,
+          target: {
+            select: resolvedTargetObjectId,
+            bindPath: resolvedBindPath,
+          },
+          unity: true,
+        });
+        if (!out.ok) {
+          return out;
+        }
+        return {
+          ok: true,
+          outZipPath: out.outZipPath,
+          proofPath: out.proofPath,
+          warnings: out.warnings ?? [],
+        };
+      } catch (error) {
+        return resolveError(error, "MF_ERR_UNITY_RECIPE_MAKE_BUNDLE", "Unity recipe make-bundle failed.");
       }
     },
   };

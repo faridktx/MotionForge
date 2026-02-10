@@ -20,6 +20,7 @@ export type TrackProperty =
 
 export interface Track {
   objectId: string;
+  bindPath?: string;
   property: TrackProperty;
   keyframes: Keyframe[];
 }

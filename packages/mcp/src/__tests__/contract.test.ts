@@ -250,6 +250,53 @@ describe("mcp contract tools", () => {
     }
   });
 
+  it("unity recipe makeBundle enforces bindPath and returns bundle output", async () => {
+    const runtime = createRuntime();
+    const handlers = createToolHandlers(runtime, {
+      version: "0.1.0",
+      commit: "abc1234",
+      maxAssetBytes: 1024 * 1024,
+    });
+    await handlers["mf.project.loadJson"]({ json: createSampleProjectJson(), staged: false });
+    const outDir = await mkdtemp(join(tmpdir(), "mf-unity-recipe-"));
+    try {
+      const preview = await handlers["mf.unity.recipe.makeBundle"]({
+        goal: "idle loop then recoil",
+        target: {
+          select: "obj_cube",
+        },
+        outDir,
+        confirm: false,
+      });
+      expect(preview.ok).toBe(false);
+      if (!preview.ok) {
+        expect((preview.error as { code: string }).code).toBe("MF_ERR_CONFIRM_REQUIRED");
+      }
+
+      const applied = await handlers["mf.unity.recipe.makeBundle"]({
+        goal: "idle loop then recoil",
+        target: {
+          select: "obj_cube",
+        },
+        outDir,
+        confirm: true,
+      });
+      expect(applied.ok).toBe(true);
+      const project = JSON.parse(await readFile(join(outDir, "project.json"), "utf8")) as {
+        animation?: { tracks?: Array<{ bindPath?: string }> };
+      };
+      const tracks = project.animation?.tracks ?? [];
+      expect(tracks.length).toBeGreaterThan(0);
+      expect(tracks.every((track) => typeof track.bindPath === "string" && track.bindPath.length > 0)).toBe(true);
+      const cubeTrack = tracks.find((track) => track.bindPath === "Cube");
+      expect(cubeTrack).toBeTruthy();
+      await access((applied as { outZipPath?: string }).outZipPath as string, fsConstants.F_OK);
+      await access((applied as { proofPath?: string }).proofPath as string, fsConstants.F_OK);
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
+    }
+  });
+
   it("script compile -> previewDiff -> apply updates animation", async () => {
     const runtime = createRuntime();
     const handlers = createToolHandlers(runtime, {

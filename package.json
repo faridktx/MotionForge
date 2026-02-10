@@ -11,6 +11,7 @@
     "mcp:dev": "pnpm -C packages/mcp dev",
     "mcp:build": "pnpm -C packages/mcp build",
     "mcp:start": "pnpm -C packages/mcp start",
+    "mcp:demo:unity": "pnpm -C packages/mcp demo:unity",
     "motionforge:cli": "pnpm -C packages/mcp motionforge",
     "build": "pnpm -r build",
     "lint": "eslint .",

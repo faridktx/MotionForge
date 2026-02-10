@@ -30,6 +30,7 @@ function renderHelpText(): string {
     "  --goal <text>          Deterministic goal phrase",
     "  --takes <spec>         Optional take ranges, e.g. \"Idle:0..2,Recoil:2..2.4\"",
     "  --out <dir>            Output directory",
+    "  --unity                Enforce Unity bindPath invariants before bundle export",
     "  --confirm              Required to apply and commit mutations",
     "  --staged               Use staged load/apply mode (default true)",
     "  --no-staged            Disable staged mode",
@@ -59,6 +60,7 @@ interface MakeBundleArgs {
   goal: string;
   takes?: PipelineTakeInput[];
   outDir: string;
+  unity: boolean;
   confirm: boolean;
   staged: boolean;
 }
@@ -68,6 +70,7 @@ function parseMakeBundleArgs(argv: string[]): MakeBundleArgs {
   let goal: string | undefined;
   let takes: PipelineTakeInput[] | undefined;
   let outDir: string | undefined;
+  let unity = false;
   let confirm = false;
   let staged = true;
 
@@ -101,6 +104,10 @@ function parseMakeBundleArgs(argv: string[]): MakeBundleArgs {
       i += 1;
       continue;
     }
+    if (arg === "--unity") {
+      unity = true;
+      continue;
+    }
     if (arg === "--confirm") {
       confirm = true;
       continue;
@@ -124,6 +131,7 @@ function parseMakeBundleArgs(argv: string[]): MakeBundleArgs {
     goal: goal.trim(),
     takes,
     outDir,
+    unity,
     confirm,
     staged,
   };
@@ -188,6 +196,7 @@ export async function runMotionforgeCli(argv: string[], io: CliIo = defaultIo): 
       goal: parsed.goal,
       takes: parsed.takes,
       outDir: parsed.outDir,
+      unity: parsed.unity,
       confirm: parsed.confirm,
       staged: parsed.staged,
     },

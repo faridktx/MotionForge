@@ -38,6 +38,14 @@ Open `http://localhost:5173`.
 4. Click `Export Video` and render a short 2-second MP4.
 5. Click `Export Bundle`, refresh, then `Import Bundle`.
 
+## Agentic Unity Flow
+
+1. Run `pnpm mcp:demo:unity`
+2. In Unity: `Tools -> MotionForge -> Import Bundle`
+3. Press Play to preview the imported Idle/Recoil animation takes
+
+If Unity import fails with a glTF importer message, install `com.unity.cloud.gltfast` in Package Manager, then import again.
+
 ## Documentation
 
 - Docs index: [docs/README.md](docs/README.md)

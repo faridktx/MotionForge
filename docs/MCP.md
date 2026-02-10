@@ -46,6 +46,7 @@ motionforge-mcp --stdio
 - `mf.io.readFileBase64`: reads small files with byte guard.
 - `mf.io.writeFile`: writes base64 payload with byte guard.
 - `mf.pipeline.makeBundle`: staged deterministic pipeline that produces `project.json`, `motionforge-bundle.zip`, and `proof.json`.
+- `mf.unity.recipe.makeBundle`: Unity-targeted wrapper around `mf.pipeline.makeBundle` with deterministic bindPath targeting.
 
 ## Headless constraints
 
@@ -215,6 +216,20 @@ Confirmed apply:
   "arguments": {
     "inJson": "{...}",
     "goal": "idle loop then recoil",
+    "outDir": "/tmp/motionforge-out",
+    "confirm": true
+  }
+}
+```
+
+Unity-targeted recipe call:
+
+```json
+{
+  "name": "mf.unity.recipe.makeBundle",
+  "arguments": {
+    "goal": "idle loop then recoil",
+    "target": { "select": "obj_cube" },
     "outDir": "/tmp/motionforge-out",
     "confirm": true
   }

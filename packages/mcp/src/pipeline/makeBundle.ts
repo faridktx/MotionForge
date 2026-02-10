@@ -18,6 +18,16 @@ export interface MakeBundlePipelineInput {
   inBundleBase64?: string;
   goal: string;
   takes?: PipelineTakeInput[];
+  constraints?: {
+    durationSec?: number;
+    style?: string;
+    fps?: number;
+  };
+  target?: {
+    select?: string;
+    bindPath?: string;
+  };
+  unity?: boolean;
   outDir: string;
   confirm: boolean;
   staged?: boolean;
@@ -85,9 +95,10 @@ export interface ProofDocument {
 interface ProjectLike {
   animation?: {
     durationSeconds?: number;
+    tracks?: Array<{ objectId?: string; bindPath?: string }>;
   };
-  objects?: Array<{ id?: string }>;
-  modelInstances?: Array<{ id?: string }>;
+  objects?: Array<{ id?: string; name?: string; bindPath?: string }>;
+  modelInstances?: Array<{ id?: string; name?: string; bindPath?: string }>;
 }
 
 function asToolCallResult(value: unknown): { ok: boolean; [key: string]: unknown } {
@@ -99,6 +110,20 @@ function asToolCallResult(value: unknown): { ok: boolean; [key: string]: unknown
 
 function normalizeGoal(goal: string): string {
   return goal.trim().toLowerCase();
+}
+
+function normalizeBindPathValue(value: string): string {
+  const out = value.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/+|\/+$/g, "");
+  return out.length > 0 ? out : "Object";
+}
+
+function normalizeSkillStyle(value: string | undefined): "snappy" | "smooth" | "heavy" | "floaty" | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "snappy" || normalized === "smooth" || normalized === "heavy" || normalized === "floaty") {
+    return normalized;
+  }
+  return null;
 }
 
 function formatNumber(value: number): string {
@@ -319,6 +344,111 @@ function getPrimaryTargetObjectId(project: ProjectLike): string | null {
   return modelId ?? null;
 }
 
+function resolveTargetObjectId(project: ProjectLike, requested: string | undefined): string | null {
+  const select = requested?.trim();
+  if (!select) {
+    return getPrimaryTargetObjectId(project);
+  }
+
+  const byId =
+    project.objects?.find((item) => item.id === select)?.id ??
+    project.modelInstances?.find((item) => item.id === select)?.id;
+  if (byId) return byId;
+
+  const byName =
+    project.objects?.find((item) => item.name === select)?.id ??
+    project.modelInstances?.find((item) => item.name === select)?.id;
+  if (byName) return byName;
+
+  return select;
+}
+
+function resolveUnityTargetBindPath(project: ProjectLike, targetSelect: string, explicitBindPath?: string): string {
+  if (explicitBindPath && explicitBindPath.trim().length > 0) {
+    return normalizeBindPathValue(explicitBindPath);
+  }
+  const byId =
+    project.objects?.find((item) => item.id === targetSelect) ??
+    project.modelInstances?.find((item) => item.id === targetSelect);
+  if (byId && typeof byId.name === "string" && byId.name.trim().length > 0) {
+    return normalizeBindPathValue(byId.name);
+  }
+  return normalizeBindPathValue(targetSelect);
+}
+
+interface EnsureUnityBindPathOptions {
+  targetSelect?: string;
+  targetBindPath?: string;
+}
+
+interface EnsureUnityBindPathResult {
+  json: string;
+  warnings: string[];
+}
+
+export function ensureUnityBindPaths(projectJson: string, options: EnsureUnityBindPathOptions = {}): EnsureUnityBindPathResult {
+  const project = JSON.parse(projectJson) as ProjectLike & Record<string, unknown>;
+  const warnings: string[] = [];
+  const objectBindPathById = new Map<string, string>();
+  const targetSelect = options.targetSelect?.trim();
+  const targetBindPath = options.targetBindPath?.trim();
+
+  const ensureObjectRows = (rows: unknown, label: "objects" | "modelInstances"): unknown => {
+    if (!Array.isArray(rows)) return rows;
+    return rows.map((row, index) => {
+      if (typeof row !== "object" || row === null) return row;
+      const item = { ...(row as Record<string, unknown>) };
+      const id = typeof item.id === "string" ? item.id : "";
+      const name = typeof item.name === "string" ? item.name : id;
+      const existing = typeof item.bindPath === "string" ? item.bindPath.trim() : "";
+      let bindPath = existing;
+      if (!bindPath) {
+        if (targetSelect && id === targetSelect && targetBindPath && targetBindPath.length > 0) {
+          bindPath = targetBindPath;
+        } else {
+          bindPath = name.length > 0 ? name : (id.length > 0 ? id : `${label}_${index + 1}`);
+        }
+        warnings.push(`Filled missing bindPath for ${label}[${index}] as "${normalizeBindPathValue(bindPath)}".`);
+      }
+      const normalized = normalizeBindPathValue(bindPath);
+      item.bindPath = normalized;
+      if (id.length > 0) {
+        objectBindPathById.set(id, normalized);
+      }
+      return item;
+    });
+  };
+
+  project.objects = ensureObjectRows(project.objects, "objects") as ProjectLike["objects"];
+  project.modelInstances = ensureObjectRows(project.modelInstances, "modelInstances") as ProjectLike["modelInstances"];
+
+  if (project.animation && Array.isArray(project.animation.tracks)) {
+    project.animation.tracks = project.animation.tracks.map((track, index) => {
+      if (typeof track !== "object" || track === null) return track;
+      const item = { ...(track as Record<string, unknown>) };
+      const objectId = typeof item.objectId === "string" ? item.objectId : "";
+      const existing = typeof item.bindPath === "string" ? item.bindPath.trim() : "";
+      if (!existing) {
+        let resolved = objectBindPathById.get(objectId) ?? objectId;
+        if (targetSelect && objectId === targetSelect && targetBindPath && targetBindPath.length > 0) {
+          resolved = targetBindPath;
+        }
+        const normalized = normalizeBindPathValue(resolved.length > 0 ? resolved : `track_${index + 1}`);
+        item.bindPath = normalized;
+        warnings.push(`Filled missing bindPath for animation.tracks[${index}] as "${normalized}".`);
+      } else {
+        item.bindPath = normalizeBindPathValue(existing);
+      }
+      return item;
+    });
+  }
+
+  return {
+    json: stableJsonStringify(project),
+    warnings,
+  };
+}
+
 function getDurationSeconds(project: ProjectLike): number {
   const value = project.animation?.durationSeconds;
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -417,7 +547,7 @@ export async function runMakeBundlePipeline(
 
   const project = JSON.parse(inputJson) as ProjectLike;
   const initialDuration = getDurationSeconds(project);
-  const targetObjectId = getPrimaryTargetObjectId(project);
+  const targetObjectId = resolveTargetObjectId(project, input.target?.select);
   if (!targetObjectId) {
     if (staged) {
       await callTool("mf.project.discard", {});
@@ -449,10 +579,20 @@ export async function runMakeBundlePipeline(
     };
   }
 
+  const requestedDuration = input.constraints?.durationSec;
+  const effectiveDuration =
+    typeof requestedDuration === "number" && Number.isFinite(requestedDuration) && requestedDuration > 0
+      ? requestedDuration
+      : initialDuration;
+
   const takes = input.takes && input.takes.length > 0
     ? normalizeTakeInputs(input.takes)
-    : deriveTakesFromGoal(input.goal, initialDuration);
-  const requiredDuration = Math.max(initialDuration, ...takes.map((take) => take.endTime));
+    : deriveTakesFromGoal(input.goal, effectiveDuration);
+  const requiredDuration = Math.max(effectiveDuration, ...takes.map((take) => take.endTime));
+  const normalizedStyle = normalizeSkillStyle(input.constraints?.style);
+  if (input.constraints?.style && !normalizedStyle) {
+    warnings.push(`Ignored unsupported style "${input.constraints.style}".`);
+  }
 
   const scriptDiffs: Array<{
     take: string;
@@ -467,6 +607,10 @@ export async function runMakeBundlePipeline(
       goal: inferTakeGoal(take, input.goal),
       constraints: {
         durationSec: Number((take.endTime - take.startTime).toFixed(4)),
+        ...(typeof input.constraints?.fps === "number" && Number.isFinite(input.constraints.fps) && input.constraints.fps > 0
+          ? { fps: input.constraints.fps }
+          : {}),
+        ...(normalizedStyle ? { style: normalizedStyle } : {}),
       },
       target: {
         select: targetObjectId,
@@ -660,7 +804,54 @@ export async function runMakeBundlePipeline(
       errors,
     };
   }
-  const finalProjectJson = String(exportedJson.json ?? "");
+  let finalProjectJson = String(exportedJson.json ?? "");
+  if (input.unity) {
+    const bindPathTarget = input.target?.select
+      ? resolveUnityTargetBindPath(project, input.target.select, input.target.bindPath)
+      : undefined;
+    const ensured = ensureUnityBindPaths(finalProjectJson, {
+      targetSelect: input.target?.select,
+      targetBindPath: bindPathTarget,
+    });
+    finalProjectJson = ensured.json;
+    warnings.push(...ensured.warnings);
+
+    const reload = asToolCallResult(await callTool("mf.project.loadJson", {
+      json: finalProjectJson,
+      staged: false,
+    }));
+    if (!reload.ok) {
+      const error = (reload.error as { code: string; message: string } | undefined) ?? {
+        code: "MF_ERR_LOAD_JSON",
+        message: "Failed to apply unity bindPath normalization.",
+      };
+      errors.push(error);
+      const proof = buildProofDocument({
+        previewOnly: true,
+        goal: input.goal,
+        takes,
+        inputHash,
+        outputProjectHash: null,
+        bundleHash: null,
+        tooling,
+        diffSummary: { scripts: scriptDiffs, totals },
+        outputs: { outDir, projectJsonPath: null, bundleZipPath: null, manifestPath: null },
+        bytes: { projectJson: null, bundleZip: null, manifest: null },
+        warnings,
+        errors,
+      });
+      await writeFile(proofPath, stableJsonStringify(proof), "utf8");
+      return {
+        ok: false,
+        previewOnly: true,
+        outZipPath: null,
+        manifestPath: null,
+        proofPath,
+        warnings,
+        errors,
+      };
+    }
+  }
   const projectJsonPath = resolve(outDir, "project.json");
   await writeFile(projectJsonPath, finalProjectJson, "utf8");
 

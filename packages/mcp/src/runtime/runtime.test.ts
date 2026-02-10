@@ -32,4 +32,26 @@ describe("runtime deterministic events", () => {
     expect(undoEvents[0].payload.label).toBe("material.set");
     expect(redoEvents[0].payload.label).toBe("material.set");
   });
+
+  it("adds bindPath to newly created tracks during key insert", () => {
+    const runtime = createRuntime();
+    runtime.loadProjectJson(createSampleProjectJson(), { staged: false });
+    runtime.execute("animation.insertRecords", {
+      records: [
+        {
+          objectId: "obj_cube",
+          propertyPath: "position.y",
+          time: 0.5,
+          value: 1,
+          interpolation: "linear",
+        },
+      ],
+    });
+
+    const json = JSON.parse(runtime.exportProjectJson()) as {
+      animation?: { tracks?: Array<{ objectId: string; property: string; bindPath?: string }> };
+    };
+    const track = json.animation?.tracks?.find((item) => item.objectId === "obj_cube" && item.property === "position.y");
+    expect(track?.bindPath).toBe("Cube");
+  });
 });

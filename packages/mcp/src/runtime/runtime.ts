@@ -37,6 +37,7 @@ const DEFAULT_MAX_IMPORT_JSON_BYTES = 25 * 1024 * 1024;
 export interface RuntimeObject {
   id: string;
   name: string;
+  bindPath?: string;
   geometryType: "box" | "sphere" | "cone";
   color: number;
   metallic?: number;
@@ -57,6 +58,7 @@ export interface RuntimeAsset {
 export interface RuntimeModelInstance {
   id: string;
   name: string;
+  bindPath?: string;
   assetId: string;
   position: [number, number, number];
   rotation: [number, number, number];
@@ -257,6 +259,24 @@ function stableTrackSort(clip: Clip): Clip {
     sorted.takes = [...clip.takes].sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id));
   }
   return sorted;
+}
+
+function resolveBindPathForObject(state: RuntimeState, objectId: string): string {
+  const fromObject = state.data.objects.find((item) => item.id === objectId);
+  if (fromObject) {
+    return (
+      (typeof fromObject.bindPath === "string" && fromObject.bindPath.length > 0 ? fromObject.bindPath : null) ??
+      (fromObject.name.length > 0 ? fromObject.name : objectId)
+    );
+  }
+  const fromModel = state.data.modelInstances?.find((item) => item.id === objectId);
+  if (fromModel) {
+    return (
+      (typeof fromModel.bindPath === "string" && fromModel.bindPath.length > 0 ? fromModel.bindPath : null) ??
+      (fromModel.name.length > 0 ? fromModel.name : objectId)
+    );
+  }
+  return objectId;
 }
 
 function normalizeProjectData(data: RuntimeProjectData): RuntimeProjectData {
@@ -613,6 +633,9 @@ export function createRuntime(options: RuntimeOptions = {}): RuntimeInstance {
         if (typeof value.value !== "number" || !Number.isFinite(value.value)) continue;
         const property = parseTrackProperty(value.propertyPath);
         const track = getOrCreateTrack(clip, value.objectId, property);
+        if (!track.bindPath || track.bindPath.length === 0) {
+          track.bindPath = resolveBindPathForObject(ctx.state, value.objectId);
+        }
         insertKeyframe(track, {
           time: value.time,
           value: value.value,
