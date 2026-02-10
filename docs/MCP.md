@@ -253,7 +253,7 @@ Confirmed apply:
 }
 ```
 
-## Claude Code / Codex config snippet
+## MCP client config snippet
 
 Use your local package path:
 

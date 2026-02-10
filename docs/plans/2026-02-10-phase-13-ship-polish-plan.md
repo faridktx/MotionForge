@@ -1,6 +1,6 @@
 # Phase 13 Ship Polish Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Implementer:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Deliver offline-first video export caching, onboarding gallery, and release workflow hardening while keeping pnpm gate green.
 

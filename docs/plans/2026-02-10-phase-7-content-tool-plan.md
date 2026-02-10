@@ -1,6 +1,6 @@
 # Phase 7 Content Tooling Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Implementer:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add glTF asset import, in-project asset metadata, bundle export, and material persistence with safety guardrails while preserving existing primitive workflows.
 

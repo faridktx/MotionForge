@@ -1,6 +1,6 @@
 # Phase 12 Shipping Hardening Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Implementer:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Harden MotionForge for offline-friendly export, stable migrations, recovery UX, and release automation while keeping web-first architecture and gate green.
 

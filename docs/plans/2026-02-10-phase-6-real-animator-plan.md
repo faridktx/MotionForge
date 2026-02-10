@@ -1,6 +1,6 @@
 # Phase 6 Real Animator Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Implementer:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Upgrade timeline/editor UX to support multi-object workflows, richer keyframe editing operations, and expanded interpolation while preserving performance and backward compatibility.
 

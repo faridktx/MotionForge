@@ -1,6 +1,6 @@
 # Phase 5 Production Hardening Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Implementer:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Harden MotionForge for demo-safe and resume-safe delivery with robust validation, tests, UI polish, and CI gate readiness.
 

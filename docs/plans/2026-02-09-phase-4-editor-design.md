@@ -1,6 +1,6 @@
 # Phase 4 Editor Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Implementer:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Implement Phase 4 undo-safe keyframe editing, timeline v2 tracks, axis-locked rotation gizmo, gizmo auto-scale, and required verification gates.
 
