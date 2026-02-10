@@ -39,7 +39,7 @@ describe("parseProjectJSONResult", () => {
 
     const result = parseProjectJSONResult(good);
     expect(result.error).toBeNull();
-    expect(result.data).toEqual({ version: 1, objects: [] });
+    expect(result.data).toEqual({ version: 4, objects: [] });
   });
 
   it("accepts valid v3 project data with assets metadata", () => {
@@ -69,7 +69,7 @@ describe("parseProjectJSONResult", () => {
 
     const result = parseProjectJSONResult(good);
     expect(result.error).toBeNull();
-    expect(result.data?.version).toBe(3);
+    expect(result.data?.version).toBe(4);
   });
 
   it("returns validation error for invalid v3 modelInstances", () => {
@@ -94,7 +94,7 @@ describe("parseProjectJSONResult", () => {
     expect(result.error).toContain("assetId");
   });
 
-  it("rejects assets metadata on version 2 projects", () => {
+  it("migrates version 2 payloads with assets into latest schema", () => {
     const bad = JSON.stringify({
       version: 2,
       objects: [],
@@ -103,18 +103,19 @@ describe("parseProjectJSONResult", () => {
     });
 
     const result = parseProjectJSONResult(bad);
-    expect(result.data).toBeNull();
-    expect(result.error).toContain("only supported in version 3");
+    expect(result.error).toBeNull();
+    expect(result.data?.version).toBe(4);
   });
 });
 
 describe("recent projects", () => {
   const baseProject: ProjectData = {
-    version: 3,
+    version: 4,
     objects: [
       {
         id: "obj",
         name: "Sample",
+        bindPath: "Sample",
         geometryType: "box",
         color: 1,
         position: [0, 0, 0],

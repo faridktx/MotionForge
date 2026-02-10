@@ -16,11 +16,26 @@ Use this script before demos or recordings. It validates the core editor loop en
 2. Reload app.
 3. Confirm onboarding modal appears with:
    - `Start Demo Project`
+   - `Open Gallery`
    - `Watch Controls`
    - `Open Project`
 4. Click `Start Demo Project`.
 
 Expected: deterministic demo project loads with animated cube and timeline keys.
+
+### 0b) Sample gallery onboarding path (45s)
+
+1. Open onboarding (`New` project and clear onboarding flag if needed).
+2. Click `Open Gallery`.
+3. Load each built-in sample once:
+   - `Primitives Demo`
+   - `Demo Model Animation`
+   - `Material Demo`
+   - `Timeline Lane Demo`
+4. Press `Space` to preview each sample.
+5. Click `Export` and ensure JSON downloads for each loaded sample.
+
+Expected: every gallery sample loads deterministically, is editable, and exports successfully.
 
 ### 1) Atomic key insert undo/redo (90s)
 
@@ -120,6 +135,14 @@ Expected: interpolation changes are undoable and playback curve reflects selecte
 
 Expected: exported MP4 is playable and matches viewport animation.
 
+### 4e) Offline-friendly export core reuse (60s)
+
+1. Run one successful video export to warm/cache encoder dependencies.
+2. Disconnect network (or simulate offline in browser devtools).
+3. Export again.
+
+Expected: export still works from cached/local core path, or fallback PNG sequence zip is produced with instructions.
+
 ### 5) Save/export + refresh/import restore (120s)
 
 1. Click `Save`.
@@ -207,6 +230,14 @@ Expected: `Unsaved` appears after edit and clears after successful save.
 
 Expected: recent list opens projects; unsupported browsers show fallback note; native mode falls back gracefully when unavailable.
 
+### 9a) Project diagnostics modal (30s)
+
+1. Click `Diagnostics` in the top bar.
+2. Confirm version/object/asset/track/payload stats render.
+3. If project includes external assets, confirm warning text is shown.
+
+Expected: diagnostics summary matches current project state.
+
 ### 10) Command palette workflow (45s)
 
 1. Press `Ctrl+K`.
@@ -215,6 +246,15 @@ Expected: recent list opens projects; unsupported browsers show fallback note; n
 4. Reopen palette and run `Toggle Grid`.
 
 Expected: command palette opens quickly, keyboard navigation works, and actions match viewport/editor behavior.
+
+### 11) Error boundary and safe mode recovery (60s)
+
+1. Open `Settings`, enable Dev Tools, click `Trigger Test Crash`.
+2. Confirm recovery modal appears with reload/export/reset options.
+3. Reload with `?safe=1` appended to URL.
+4. Confirm viewport is disabled and `Export Project JSON` is available.
+
+Expected: crash is recoverable without data loss path; safe mode allows JSON export recovery without WebGL.
 
 ## Known Failure Symptoms
 

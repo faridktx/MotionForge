@@ -2,7 +2,7 @@ import { sceneStore } from "../../state/sceneStore.js";
 import { animationStore } from "../../state/animationStore.js";
 import { assetStore, type AssetRecord, type MaterialOverrideRecord } from "../../state/assetStore.js";
 import type { Clip } from "@motionforge/engine";
-import { validateProjectDataDetailed } from "@motionforge/engine";
+import { migrateProjectDataToLatest, validateProjectDataDetailed } from "@motionforge/engine";
 import { collectMaterialOverrides, base64ToArrayBuffer } from "../three/importGltf.js";
 import { strToU8, zipSync } from "fflate";
 import {
@@ -12,7 +12,7 @@ import {
   savePayloadToIndexedDb,
 } from "./projectPayloadStore.js";
 
-export const PROJECT_VERSION = 3;
+export const PROJECT_VERSION = 4;
 const STORAGE_KEY = "motionforge_project";
 const RECENT_INDEX_KEY = "motionforge_recent_projects_v1";
 const RECENT_ITEM_PREFIX = "motionforge_recent_item_"; // legacy payload prefix (localStorage)
@@ -21,6 +21,7 @@ const MAX_RECENT_PROJECTS = 5;
 export interface ProjectObjectData {
   id: string;
   name: string;
+  bindPath?: string;
   geometryType: "box" | "sphere" | "cone";
   color: number;
   metallic?: number;
@@ -35,11 +36,29 @@ export type ProjectAssetData = AssetRecord;
 export interface ProjectModelInstanceData {
   id: string;
   name: string;
+  bindPath?: string;
   assetId: string;
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
   materialOverrides?: MaterialOverrideRecord[];
+}
+
+export interface BundleManifestData {
+  version: 1;
+  exportedAt: string;
+  projectVersion: number;
+  primaryModelAssetId: string | null;
+  takes: Array<{
+    id: string;
+    name: string;
+    startTime: number;
+    endTime: number;
+  }>;
+  clipNaming: {
+    pattern: "<ProjectName>_<TakeName>";
+    fallbackTakeName: "Main";
+  };
 }
 
 export interface ProjectData {
@@ -58,6 +77,13 @@ export interface ProjectData {
 export interface ParseProjectResult {
   data: ProjectData | null;
   error: string | null;
+}
+
+export interface ProjectBundleArtifact {
+  fileName: string;
+  bytes: Uint8Array;
+  sizeBytes: number;
+  assetCount: number;
 }
 
 export interface RecentProjectEntry {
@@ -79,11 +105,103 @@ function detectGeometryType(obj: THREE.Mesh): "box" | "sphere" | "cone" | null {
   return null;
 }
 
+function sanitizeBindPathSegment(value: string): string {
+  const cleaned = value
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\//g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return cleaned.length > 0 ? cleaned : "Object";
+}
+
+function withUniqueBindPath(basePath: string, used: Set<string>): string {
+  if (!used.has(basePath)) {
+    used.add(basePath);
+    return basePath;
+  }
+  let index = 2;
+  let next = `${basePath}_${index}`;
+  while (used.has(next)) {
+    index += 1;
+    next = `${basePath}_${index}`;
+  }
+  used.add(next);
+  return next;
+}
+
+function computeBindPathMap(): Map<string, string> {
+  const objects = sceneStore.getAllUserObjects();
+  const items = objects
+    .map((object) => {
+      const id = sceneStore.getIdForObject(object);
+      if (!id) return null;
+      const segments: string[] = [];
+      let cursor: THREE.Object3D | null = object;
+      while (cursor) {
+        const cursorId = sceneStore.getIdForObject(cursor);
+        if (!cursorId) break;
+        const part = sanitizeBindPathSegment(cursor.name || cursorId);
+        segments.unshift(part);
+        const parent: THREE.Object3D | null = cursor.parent;
+        if (!parent || !sceneStore.getIdForObject(parent)) break;
+        cursor = parent;
+      }
+      const basePath = segments.length > 0 ? segments.join("/") : sanitizeBindPathSegment(object.name || id);
+      return { id, basePath };
+    })
+    .filter((item): item is { id: string; basePath: string } => Boolean(item))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  const used = new Set<string>();
+  const map = new Map<string, string>();
+  for (const item of items) {
+    map.set(item.id, withUniqueBindPath(item.basePath, used));
+  }
+  return map;
+}
+
+function buildBundleManifest(data: ProjectData, exportedAt: string): BundleManifestData {
+  const primaryModelAssetId =
+    data.modelInstances && data.modelInstances.length > 0
+      ? [...data.modelInstances].sort((a, b) => a.id.localeCompare(b.id))[0]?.assetId ?? null
+      : null;
+  const duration = data.animation?.durationSeconds ?? 0;
+  const takes = Array.isArray((data.animation as { takes?: unknown[] } | undefined)?.takes)
+    ? ((data.animation as { takes?: Array<{ id: string; name: string; startTime: number; endTime: number }> }).takes ?? [])
+    : [];
+  const manifestTakes = takes.length > 0
+    ? takes
+        .map((take) => ({
+          id: String(take.id),
+          name: String(take.name),
+          startTime: Number(take.startTime),
+          endTime: Number(take.endTime),
+        }))
+        .sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id))
+    : duration > 0
+      ? [{ id: "take_main", name: "Main", startTime: 0, endTime: duration }]
+      : [];
+  return {
+    version: 1,
+    exportedAt,
+    projectVersion: data.version,
+    primaryModelAssetId,
+    takes: manifestTakes,
+    clipNaming: {
+      pattern: "<ProjectName>_<TakeName>",
+      fallbackTakeName: "Main",
+    },
+  };
+}
+
 import type * as THREE from "three";
 
 export function serializeProject(): ProjectData {
   const objects: ProjectObjectData[] = [];
   const modelInstances: ProjectModelInstanceData[] = [];
+  const bindPathById = computeBindPathMap();
 
   for (const obj of sceneStore.getAllUserObjects()) {
     const assetId = typeof obj.userData.__assetId === "string" ? obj.userData.__assetId as string : null;
@@ -94,6 +212,7 @@ export function serializeProject(): ProjectData {
       modelInstances.push({
         id,
         name: obj.name,
+        bindPath: bindPathById.get(id) ?? sanitizeBindPathSegment(obj.name || id),
         assetId,
         position: [obj.position.x, obj.position.y, obj.position.z],
         rotation: [obj.rotation.x, obj.rotation.y, obj.rotation.z],
@@ -115,6 +234,7 @@ export function serializeProject(): ProjectData {
     objects.push({
       id,
       name: obj.name,
+      bindPath: bindPathById.get(id) ?? sanitizeBindPathSegment(obj.name || id),
       geometryType: geoType,
       color: mat.color.getHex(),
       metallic: Number.isFinite(mat.metalness) ? mat.metalness : undefined,
@@ -151,7 +271,13 @@ export function serializeProject(): ProjectData {
   // Serialize animation clip
   const clip = animationStore.getClip();
   if (clip.tracks.length > 0) {
-    data.animation = clip;
+    data.animation = {
+      ...clip,
+      tracks: clip.tracks.map((track) => ({
+        ...track,
+        bindPath: bindPathById.get(track.objectId),
+      })),
+    } as unknown as Clip;
   }
 
   return data;
@@ -366,11 +492,12 @@ export function parseProjectJSON(json: string): ProjectData | null {
 export function parseProjectJSONResult(json: string): ParseProjectResult {
   try {
     const data = JSON.parse(json) as unknown;
-    const validation = validateProjectDataDetailed(data);
+    const migrated = migrateProjectDataToLatest(data);
+    const validation = validateProjectDataDetailed(migrated.data);
     if (!validation.valid) {
       return { data: null, error: validation.error ?? "Project format is invalid." };
     }
-    return { data: data as ProjectData, error: null };
+    return { data: migrated.data as unknown as ProjectData, error: null };
   } catch {
     return { data: null, error: "File is not valid JSON." };
   }
@@ -397,11 +524,13 @@ export function getBundleAssetFileName(asset: ProjectAssetData): string {
   return `${sanitizeBundleFileName(asset.id)}-${baseName || "asset.bin"}`;
 }
 
-export function downloadProjectBundle(): void {
-  const data = serializeProject();
+export function buildProjectBundleArtifact(data: ProjectData = serializeProject()): ProjectBundleArtifact {
   const bundleFiles: Record<string, Uint8Array> = {};
+  const exportedAt = new Date().toISOString();
+  const manifest = buildBundleManifest(data, exportedAt);
 
   bundleFiles["project.json"] = strToU8(JSON.stringify(data, null, 2));
+  bundleFiles["motionforge-manifest.json"] = strToU8(JSON.stringify(manifest, null, 2));
 
   if (data.assets) {
     const sortedAssets = [...data.assets].sort((a, b) => a.id.localeCompare(b.id));
@@ -420,11 +549,25 @@ export function downloadProjectBundle(): void {
   const zipped = zipSync(bundleFiles, { level: 6 });
   const zipBytes = new Uint8Array(zipped.byteLength);
   zipBytes.set(zipped);
-  const blob = new Blob([zipBytes], { type: "application/zip" });
+  return {
+    fileName: "motionforge-bundle.zip",
+    bytes: zipBytes,
+    sizeBytes: zipBytes.byteLength,
+    assetCount: data.assets?.length ?? 0,
+  };
+}
+
+export function downloadProjectBundle(): void {
+  const artifact = buildProjectBundleArtifact();
+  const blobBytes = artifact.bytes.buffer.slice(
+    artifact.bytes.byteOffset,
+    artifact.bytes.byteOffset + artifact.bytes.byteLength,
+  ) as ArrayBuffer;
+  const blob = new Blob([blobBytes], { type: "application/zip" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "motionforge-bundle.zip";
+  a.download = artifact.fileName;
   a.click();
   URL.revokeObjectURL(url);
 }

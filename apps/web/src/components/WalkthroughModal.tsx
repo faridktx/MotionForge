@@ -4,9 +4,10 @@ interface WalkthroughModalProps {
   open: boolean;
   onClose: () => void;
   onResetDemo?: () => void;
+  onOpenGallery?: () => void;
 }
 
-export function WalkthroughModal({ open, onClose, onResetDemo }: WalkthroughModalProps) {
+export function WalkthroughModal({ open, onClose, onResetDemo, onOpenGallery }: WalkthroughModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -102,9 +103,16 @@ export function WalkthroughModal({ open, onClose, onResetDemo }: WalkthroughModa
           {onResetDemo && (
             <section className="modal-section">
               <h3>Demo</h3>
-              <button className="topbar-btn topbar-btn--primary" onClick={onResetDemo}>
-                Reset Demo
-              </button>
+              <div className="onboarding-actions">
+                <button className="topbar-btn topbar-btn--primary" onClick={onResetDemo}>
+                  Reset Demo
+                </button>
+                {onOpenGallery && (
+                  <button className="topbar-btn" onClick={onOpenGallery}>
+                    Open Gallery
+                  </button>
+                )}
+              </div>
             </section>
           )}
         </div>

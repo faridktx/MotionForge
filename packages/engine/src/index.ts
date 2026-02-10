@@ -7,9 +7,10 @@ export { degToRad, radToDeg } from "./conversion.js";
 export { validateProjectData, validateProjectDataDetailed } from "./projectSchema.js";
 export type { ProjectSchema, ProjectObjectSchema, ProjectAssetSchema, ProjectModelInstanceSchema } from "./projectSchema.js";
 export type { ProjectValidationResult } from "./projectSchema.js";
+export { LATEST_PROJECT_VERSION, migrateProjectDataToLatest } from "./projectMigrations.js";
 
 // Animation
-export type { Keyframe, Track, Clip, TrackProperty, Interpolation } from "./animation/types.js";
+export type { Keyframe, Track, Clip, TrackProperty, Interpolation, AnimationTake } from "./animation/types.js";
 export { createEmptyClip } from "./animation/types.js";
 export { evaluateTrack, evaluateClip, getKeyframeTimesForObject } from "./animation/evaluate.js";
 export { insertKeyframe, getOrCreateTrack, addTransformKeyframes, removeTracksForObject } from "./animation/addKeyframe.js";

@@ -10,6 +10,7 @@ export const DEMO_PROJECT: ProjectData = {
     {
       id: "demo_cube",
       name: "Demo Cube",
+      bindPath: "Demo_Cube",
       geometryType: "box",
       color: 0x4b8cff,
       metallic: 0.35,
@@ -59,4 +60,3 @@ export function markOnboardingSeen(): void {
 export function resetOnboardingSeen(): void {
   localStorage.removeItem(ONBOARDING_SEEN_KEY);
 }
-

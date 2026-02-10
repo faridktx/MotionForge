@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { migrateProjectDataToLatest, validateProjectDataDetailed } from "@motionforge/engine";
 import { sceneStore } from "../../state/sceneStore.js";
 import { animationStore } from "../../state/animationStore.js";
 import { undoStore } from "../../state/undoStore.js";
@@ -80,6 +81,7 @@ async function loadModelInstance(
 
   annotateImportedHierarchy(root, asset.id, asset.name);
   root.name = instance.name;
+  root.userData.__bindPath = instance.bindPath;
   root.position.set(...instance.position);
   root.rotation.set(...instance.rotation);
   root.scale.set(...instance.scale);
@@ -121,6 +123,7 @@ async function dryRunDeserializeProject(data: ProjectData): Promise<StagedProjec
       const mat = new THREE.MeshStandardMaterial({ color: objData.color });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = objData.name;
+      mesh.userData.__bindPath = objData.bindPath;
       mesh.position.set(...objData.position);
       mesh.rotation.set(...objData.rotation);
       mesh.scale.set(...objData.scale);
@@ -235,7 +238,13 @@ export function createDefaultObjects(): THREE.Mesh[] {
  * Supports v1 (no animation) and v2 (with animation) formats.
  */
 export async function deserializeProject(data: ProjectData): Promise<THREE.Object3D[]> {
-  const staged = await dryRunDeserializeProject(data);
+  const migrated = migrateProjectDataToLatest(data);
+  const validation = validateProjectDataDetailed(migrated.data);
+  if (!validation.valid) {
+    throw new Error(validation.error ?? "Project validation failed.");
+  }
+
+  const staged = await dryRunDeserializeProject(migrated.data as unknown as ProjectData);
   return commitStagedProjectLoad(staged);
 }
 

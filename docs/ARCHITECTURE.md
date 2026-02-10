@@ -167,6 +167,13 @@ Video export runs entirely on the client:
 
 This flow avoids server rendering and keeps the app web-first.
 
+### Export Dependency Strategy (Offline-Friendly)
+
+- MotionForge first tries local ffmpeg core URLs (`/ffmpeg-core/ffmpeg-core.js|.wasm`).
+- If local assets are unavailable, it falls back to remote core URLs and caches them in `CacheStorage` (`motionforge-ffmpeg-core-v1`).
+- Subsequent exports can reuse cached core blobs while offline.
+- If encoder load/encode fails, export falls back to a PNG sequence zip with a README encoding command.
+
 ## Built-in Demo Asset Fixture
 
 MotionForge ships a deterministic built-in model at `apps/web/public/assets/demo-model.glb` for predictable demos and soak runs.
@@ -174,6 +181,26 @@ MotionForge ships a deterministic built-in model at `apps/web/public/assets/demo
 - `insertBuiltInDemoModel()` loads this fixture through the same glTF import path used by user imports.
 - The model is registered in the scene/object registry and added to the asset registry as an embedded asset record.
 - The soak harness periodically imports this same fixture so stress tests are repeatable across machines.
+
+## Perf
+
+Current production build profile (`pnpm -C apps/web build`):
+
+- `index-*.js`: ~300KB
+- `three-runtime-*.js`: ~606KB (lazy-loaded)
+- `videoExport-*.js`: ~6KB (lazy-loaded)
+- `ffmpeg-*.js`: ~6KB (lazy-loaded)
+
+What is lazy-loaded:
+
+- `Viewport` component (and Three runtime chunk) via `React.lazy`.
+- `videoExport` runtime module when the Export Video modal opens.
+- ffmpeg package code only when export runtime is requested.
+
+Runtime metrics:
+
+- Renderer stats overlay samples `FPS`, draw calls, geometries, and textures every 500ms.
+- Sampling is store-driven and does not introduce per-frame React rerenders.
 
 ## Selection Flow
 
@@ -229,15 +256,17 @@ Recent/autosave persistence:
 
 ### Load
 
-Load is now a two-phase pipeline to avoid partial mutation:
+Load is now a staged pipeline to avoid partial mutation:
 
-1. Parse and validate JSON (or bundle `project.json`).
-2. **Dry-run stage** (`dryRunDeserializeProject`):
+1. Parse JSON (or bundle `project.json`).
+2. Migrate legacy versions (`v1 -> v2 -> v3 -> v4`) via `migrateProjectDataToLatest`.
+3. Validate migrated payload.
+4. **Dry-run stage** (`dryRunDeserializeProject`):
   - build all primitive objects in memory
   - reconstruct model instances from embedded assets in memory
   - prepare staged asset/animation/camera payloads
   - if any step fails, staged objects are disposed and live scene remains unchanged
-3. **Commit stage** (`commitStagedProjectLoad`), only if dry-run succeeds:
+5. **Commit stage** (`commitStagedProjectLoad`), only if dry-run succeeds:
   - clear live user objects
   - replace asset store
   - add/register staged objects
@@ -265,6 +294,21 @@ Load is now a two-phase pipeline to avoid partial mutation:
   - `Save` back to last opened/saved handle
   - `Save As` to choose a new handle
 - Native file handles remain in memory only; persistent local metadata stores file name + timestamp.
+
+### Recovery and Safe Mode
+
+- `AppErrorBoundary` wraps the app shell and catches React render/runtime errors.
+- Recovery UI actions:
+  - Reload app
+  - Export autosave snapshot
+  - Reset to demo project
+- Safe mode (`?safe=1`) disables viewport mount and keeps project export available for recovery.
+
+### Destructive Action Guards
+
+- Dirty-scene confirms gate `New`, `Open`, and `Import`.
+- `Purge Unused` always confirms with unused asset count before applying mutation.
+- Purge logic is centralized in `purgeUnusedAssetsWithConfirm()` and unit-tested for non-mutation when confirm is declined.
 
 ### New project
 

@@ -1,10 +1,11 @@
 /**
  * Validate a raw parsed JSON object against the project schema.
- * Supports both v1 (objects only) and v2 (objects + animation).
+ * Supports versions v1 through v4.
  */
 export interface ProjectObjectSchema {
   id: string;
   name: string;
+  bindPath?: string;
   geometryType: "box" | "sphere" | "cone";
   color: number;
   metallic?: number;
@@ -34,6 +35,7 @@ export interface ProjectAssetSchema {
 export interface ProjectModelInstanceSchema {
   id: string;
   name: string;
+  bindPath?: string;
   assetId: string;
   position: [number, number, number];
   rotation: [number, number, number];
@@ -58,8 +60,15 @@ export interface ProjectSchema {
   };
   animation?: {
     durationSeconds: number;
+    takes?: {
+      id: string;
+      name: string;
+      startTime: number;
+      endTime: number;
+    }[];
     tracks: {
       objectId: string;
+      bindPath?: string;
       property: string;
       keyframes: { time: number; value: number; interpolation: string }[];
     }[];
@@ -67,7 +76,7 @@ export interface ProjectSchema {
 }
 
 const VALID_GEO_TYPES = new Set(["box", "sphere", "cone"]);
-const SUPPORTED_VERSIONS = new Set([1, 2, 3]);
+const SUPPORTED_VERSIONS = new Set([1, 2, 3, 4]);
 const VALID_TRACK_PROPS = new Set([
   "position.x", "position.y", "position.z",
   "rotation.x", "rotation.y", "rotation.z",
@@ -90,13 +99,13 @@ export function validateProjectDataDetailed(data: unknown): ProjectValidationRes
 
   const d = data as Record<string, unknown>;
   if (typeof d.version !== "number" || !Number.isFinite(d.version)) {
-    return invalid("version must be a finite number");
+    return invalid("version must be a finite number at path version");
   }
   if (!SUPPORTED_VERSIONS.has(d.version)) {
-    return invalid("unsupported project version");
+    return invalid("unsupported project version at path version");
   }
   if (d.version < 3 && (d.assets !== undefined || d.modelInstances !== undefined)) {
-    return invalid("assets/modelInstances are only supported in version 3");
+    return invalid("assets/modelInstances are only supported in version 3+");
   }
   if (!Array.isArray(d.objects)) {
     return invalid("objects must be an array");
@@ -108,6 +117,12 @@ export function validateProjectDataDetailed(data: unknown): ProjectValidationRes
     const o = obj as Record<string, unknown>;
     if (typeof o.id !== "string") return invalid(`objects[${i}].id must be a string`);
     if (typeof o.name !== "string") return invalid(`objects[${i}].name must be a string`);
+    if (d.version >= 4 && typeof o.bindPath !== "string") {
+      return invalid(`objects[${i}].bindPath must be a string`);
+    }
+    if (o.bindPath !== undefined && !isValidBindPath(o.bindPath)) {
+      return invalid(`objects[${i}].bindPath is invalid`);
+    }
     if (typeof o.geometryType !== "string" || !VALID_GEO_TYPES.has(o.geometryType)) {
       return invalid(`objects[${i}].geometryType is invalid`);
     }
@@ -139,7 +154,7 @@ export function validateProjectDataDetailed(data: unknown): ProjectValidationRes
         }
       }
     }
-    const result = validateModelInstances(d.modelInstances, assetIds);
+    const result = validateModelInstances(d.modelInstances, assetIds, d.version);
     if (!result.valid) return result;
   }
 
@@ -175,6 +190,29 @@ function validateAnimation(anim: unknown): ProjectValidationResult {
   }
   if (!Array.isArray(a.tracks)) return invalid("animation.tracks must be an array");
 
+  if (a.takes !== undefined) {
+    if (!Array.isArray(a.takes)) return invalid("animation.takes must be an array");
+    const seenIds = new Set<string>();
+    for (let i = 0; i < a.takes.length; i++) {
+      const take = a.takes[i];
+      if (typeof take !== "object" || take === null) return invalid(`animation.takes[${i}] must be an object`);
+      const t = take as Record<string, unknown>;
+      if (typeof t.id !== "string" || t.id.length === 0) return invalid(`animation.takes[${i}].id must be a non-empty string`);
+      if (seenIds.has(t.id)) return invalid(`animation.takes[${i}].id must be unique`);
+      seenIds.add(t.id);
+      if (typeof t.name !== "string" || t.name.length === 0) return invalid(`animation.takes[${i}].name must be a non-empty string`);
+      if (typeof t.startTime !== "number" || !Number.isFinite(t.startTime)) {
+        return invalid(`animation.takes[${i}].startTime must be a finite number`);
+      }
+      if (typeof t.endTime !== "number" || !Number.isFinite(t.endTime)) {
+        return invalid(`animation.takes[${i}].endTime must be a finite number`);
+      }
+      if (t.startTime < 0 || t.endTime > a.durationSeconds || t.endTime <= t.startTime) {
+        return invalid(`animation.takes[${i}] range must satisfy 0 <= startTime < endTime <= durationSeconds`);
+      }
+    }
+  }
+
   for (let i = 0; i < a.tracks.length; i++) {
     const track = a.tracks[i];
     if (typeof track !== "object" || track === null) return invalid(`animation.tracks[${i}] must be an object`);
@@ -203,6 +241,10 @@ function validateAnimation(anim: unknown): ProjectValidationResult {
       if (typeof k.interpolation !== "string" || !VALID_INTERPOLATIONS.has(k.interpolation)) {
         return invalid(`animation.tracks[${i}].keyframes[${j}].interpolation is invalid`);
       }
+    }
+
+    if (t.bindPath !== undefined && !isValidBindPath(t.bindPath)) {
+      return invalid(`animation.tracks[${i}].bindPath is invalid`);
     }
   }
 
@@ -248,7 +290,7 @@ function validateAssets(assets: unknown): ProjectValidationResult {
   return { valid: true };
 }
 
-function validateModelInstances(modelInstances: unknown, assetIds: Set<string>): ProjectValidationResult {
+function validateModelInstances(modelInstances: unknown, assetIds: Set<string>, version: number): ProjectValidationResult {
   if (!Array.isArray(modelInstances)) return invalid("modelInstances must be an array");
 
   for (let i = 0; i < modelInstances.length; i++) {
@@ -258,6 +300,12 @@ function validateModelInstances(modelInstances: unknown, assetIds: Set<string>):
 
     if (typeof inst.id !== "string" || inst.id.length === 0) return invalid(`modelInstances[${i}].id must be a non-empty string`);
     if (typeof inst.name !== "string" || inst.name.length === 0) return invalid(`modelInstances[${i}].name must be a non-empty string`);
+    if (inst.bindPath !== undefined && !isValidBindPath(inst.bindPath)) {
+      return invalid(`modelInstances[${i}].bindPath is invalid`);
+    }
+    if (version >= 4 && typeof inst.bindPath !== "string") {
+      return invalid(`modelInstances[${i}].bindPath must be a non-empty string`);
+    }
     if (typeof inst.assetId !== "string" || inst.assetId.length === 0) return invalid(`modelInstances[${i}].assetId must be a non-empty string`);
     if (!assetIds.has(inst.assetId)) {
       return invalid(`modelInstances[${i}].assetId must reference an existing asset`);
@@ -311,6 +359,17 @@ function isVec3Tuple(v: unknown): v is [number, number, number] {
 
 function isUnitNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
+}
+
+function isValidBindPath(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  const path = v.trim();
+  if (path.length === 0) return false;
+  if (path.startsWith("/") || path.endsWith("/")) return false;
+  if (path.includes("//")) return false;
+  const segments = path.split("/");
+  if (segments.length === 0) return false;
+  return segments.every((segment) => segment.length > 0 && /^[a-zA-Z0-9._-]+$/.test(segment));
 }
 
 function invalid(error: string): ProjectValidationResult {

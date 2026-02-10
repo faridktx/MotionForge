@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 interface OnboardingModalProps {
   open: boolean;
   onStartDemo: () => void;
+  onOpenGallery: () => void;
   onWatchControls: () => void;
   onOpenProject: () => void;
 }
@@ -10,6 +11,7 @@ interface OnboardingModalProps {
 export function OnboardingModal({
   open,
   onStartDemo,
+  onOpenGallery,
   onWatchControls,
   onOpenProject,
 }: OnboardingModalProps) {
@@ -45,14 +47,17 @@ export function OnboardingModal({
         <div className="modal-body">
           <section className="modal-section">
             <p>
-              Start quickly with a deterministic demo project, open one of your own files, or review controls before
-              editing.
+              Start quickly with a deterministic demo project, open the sample gallery, import your own files, or
+              review controls before editing.
             </p>
           </section>
 
           <section className="modal-section onboarding-actions">
             <button className="topbar-btn topbar-btn--primary" onClick={onStartDemo}>
               Start Demo Project
+            </button>
+            <button className="topbar-btn" onClick={onOpenGallery}>
+              Open Gallery
             </button>
             <button className="topbar-btn" onClick={onWatchControls}>
               Watch Controls
@@ -77,4 +82,3 @@ export function OnboardingModal({
     </div>
   );
 }
-

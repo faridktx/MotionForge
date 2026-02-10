@@ -1,26 +1,28 @@
 # Project Format
 
-MotionForge projects are stored as JSON files. This document describes versions `1`, `2`, and `3`.
+MotionForge projects are stored as JSON files. This document describes versions `1`, `2`, `3`, and `4`.
 
 ## Version
 
-Current version: `3`
+Current version: `4`
 
 - `v1`: scene objects only (no animation).
 - `v2`: adds animation clip data.
 - `v3`: adds asset metadata + model instances for imported glTF content.
+- `v4`: shipping-hardening format; legacy projects are migrated to v4 before validation/load.
 
-Backward compatibility is preserved: `v1` and `v2` continue to load.
+Backward compatibility is preserved: `v1`, `v2`, and `v3` continue to load.
 
-## Schema (v3 example)
+## Schema (v4 example)
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "objects": [
     {
       "id": "obj_1",
       "name": "Cube",
+      "bindPath": "Cube",
       "geometryType": "box",
       "color": 4490495,
       "metallic": 0.1,
@@ -47,6 +49,7 @@ Backward compatibility is preserved: `v1` and `v2` continue to load.
     {
       "id": "obj_5",
       "name": "Robot",
+      "bindPath": "Robot",
       "assetId": "asset_1",
       "position": [0, 0, 0],
       "rotation": [0, 0, 0],
@@ -68,9 +71,14 @@ Backward compatibility is preserved: `v1` and `v2` continue to load.
   },
   "animation": {
     "durationSeconds": 5,
+    "takes": [
+      { "id": "take_idle", "name": "Idle", "startTime": 0, "endTime": 2 },
+      { "id": "take_recoil", "name": "Recoil", "startTime": 2, "endTime": 2.4 }
+    ],
     "tracks": [
       {
         "objectId": "obj_1",
+        "bindPath": "Cube",
         "property": "position.x",
         "keyframes": [
           { "time": 0, "value": 0, "interpolation": "linear" },
@@ -96,7 +104,7 @@ Backward compatibility is preserved: `v1` and `v2` continue to load.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `version` | number | yes | `1`, `2`, or `3` |
+| `version` | number | yes | `1`, `2`, `3`, or `4` |
 | `objects` | array | yes | Primitive scene objects |
 | `assets` | array | v3 optional | Asset registry metadata |
 | `modelInstances` | array | v3 optional | Scene instances of imported assets |
@@ -110,6 +118,7 @@ Backward compatibility is preserved: `v1` and `v2` continue to load.
 | --- | --- | --- |
 | `id` | string | Stable object identifier |
 | `name` | string | Display name |
+| `bindPath` | string | Stable hierarchy binding path for downstream importers |
 | `geometryType` | `"box" \| "sphere" \| "cone"` | Primitive type |
 | `color` | number | Base color (hex integer) |
 | `metallic` | number | Optional, `[0,1]` |
@@ -138,6 +147,7 @@ Backward compatibility is preserved: `v1` and `v2` continue to load.
 | --- | --- | --- |
 | `id` | string | Scene object ID for root instance |
 | `name` | string | Instance display name |
+| `bindPath` | string | Stable hierarchy binding path for root instance |
 | `assetId` | string | Must reference an existing `assets[*].id` |
 | `position` | `[x,y,z]` | Finite numbers |
 | `rotation` | `[x,y,z]` | Finite numbers |
@@ -155,12 +165,29 @@ Backward compatibility is preserved: `v1` and `v2` continue to load.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `durationSeconds` | number | `(0, 3600]` |
+| `takes` | array | Optional clip slices for multi-take exports/importers |
 | `tracks` | array | Keyframe tracks |
+
+Take fields (`animation.takes[]`):
+- `id`: stable take id
+- `name`: display name (`Idle`, `Recoil`, etc.)
+- `startTime`: inclusive start in seconds
+- `endTime`: exclusive-ish end in seconds (`endTime > startTime`)
+
+Compatibility behavior:
+- If `takes` is missing, importers should treat the full duration as one take: `Main` (`0..durationSeconds`).
+- v1/v2/v3/v4 loads synthesize a fallback `take_main` when animation exists and no takes are present.
 
 Track `property` is one of:
 - `position.x`, `position.y`, `position.z`
 - `rotation.x`, `rotation.y`, `rotation.z`
 - `scale.x`, `scale.y`, `scale.z`
+
+Track fields:
+- `objectId`: source object id
+- `bindPath` (optional): stable hierarchy path for deterministic DCC/engine import
+- `property`: transform channel
+- `keyframes`: ordered keys
 
 Keyframes:
 - `time`: number in `[0, durationSeconds]`
@@ -192,10 +219,18 @@ Compatibility notes:
 - JSON export: single file (`motionforge-project.json`).
 - Bundle export: zip (`motionforge-bundle.zip`) with:
   - `project.json`
+  - `motionforge-manifest.json`
   - `assets/*` (embedded asset bytes when available)
 
 Bundle layout details:
 - `project.json` is required.
+- `motionforge-manifest.json` is optional but recommended and includes:
+  - `version` (manifest schema version)
+  - `exportedAt` (ISO timestamp)
+  - `projectVersion`
+  - `primaryModelAssetId` (if model instances exist)
+  - `takes[]` summary for multi-clip importers
+  - `clipNaming` metadata (`pattern`, `fallbackTakeName`)
 - Embedded asset payloads are emitted under `assets/<assetId>-<sanitizedName>`.
 - External assets are emitted as `assets/<assetId>-<sanitizedName>.external.txt` reference notes.
 - Bundle import reconstructs embedded `assets[*].source.data` from `assets/*` binaries before deserialization.
@@ -213,8 +248,22 @@ Validation is provided by `@motionforge/engine`:
 
 Key rules:
 - `version` must be supported.
-- `assets` and `modelInstances` are only valid in `v3`.
+- `assets` and `modelInstances` are only valid in `v3+`.
 - `modelInstances[*].assetId` must reference an existing asset.
 - Numeric vectors and keyframe/material values must be finite and in valid ranges.
 
 Invalid imports are rejected with a user-visible error and do not replace the current scene.
+
+## Migration Pipeline
+
+Import uses a pure migration pipeline before validation:
+
+1. `v1 -> v2`
+2. `v2 -> v3`
+3. `v3 -> v4`
+
+Load path is:
+
+`migrate -> validate -> dry-run deserialize -> atomic commit`
+
+If migration or validation fails, the current live scene remains unchanged.

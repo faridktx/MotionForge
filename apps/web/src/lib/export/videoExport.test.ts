@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildFrameTimes,
+  cleanupExportResources,
   frameIndexToTimeSeconds,
   normalizeVideoExportSettings,
+  resolveFfmpegCoreAssetUrls,
   validateVideoExportSettings,
   type VideoExportSettings,
 } from "./videoExport.js";
@@ -62,5 +64,42 @@ describe("frame scheduling math", () => {
   it("builds frame times for duration and fps", () => {
     const frames = buildFrameTimes(2, 4);
     expect(frames).toEqual([0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]);
+  });
+});
+
+describe("ffmpeg core asset resolution", () => {
+  it("resolves local asset URLs when strategy is local", () => {
+    const urls = resolveFfmpegCoreAssetUrls({ strategy: "local" });
+    expect(urls.strategy).toBe("local");
+    expect(urls.coreScriptUrl).toContain("ffmpeg-core.js");
+    expect(urls.wasmUrl).toContain("ffmpeg-core.wasm");
+  });
+
+  it("resolves remote asset URLs when strategy is remote", () => {
+    expect(resolveFfmpegCoreAssetUrls({ strategy: "remote", basePath: "https://cdn.example.com/ffmpeg" })).toEqual({
+      strategy: "remote",
+      coreScriptUrl: "https://cdn.example.com/ffmpeg/ffmpeg-core.js",
+      wasmUrl: "https://cdn.example.com/ffmpeg/ffmpeg-core.wasm",
+    });
+  });
+});
+
+describe("export cleanup", () => {
+  it("terminates encoder and revokes all object URLs", () => {
+    const terminate = vi.fn();
+    const revokeObjectURL = vi.fn();
+
+    const result = cleanupExportResources({
+      ffmpegTerminate: terminate,
+      createdObjectUrls: ["blob:a", "blob:b"],
+      revokeObjectURL,
+    });
+
+    expect(terminate).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      terminated: true,
+      revokedObjectUrls: 2,
+    });
   });
 });

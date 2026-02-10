@@ -8,6 +8,10 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "dev": "pnpm -C apps/web dev",
+    "mcp:dev": "pnpm -C packages/mcp dev",
+    "mcp:build": "pnpm -C packages/mcp build",
+    "mcp:start": "pnpm -C packages/mcp start",
+    "motionforge:cli": "pnpm -C packages/mcp motionforge",
     "build": "pnpm -r build",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

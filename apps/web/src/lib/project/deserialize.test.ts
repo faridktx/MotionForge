@@ -82,7 +82,7 @@ describe("deserializeProject dry-run safety", () => {
       ],
     };
 
-    await expect(deserializeProject(invalidProject)).rejects.toThrow("missing asset");
+    await expect(deserializeProject(invalidProject)).rejects.toThrow("modelInstances[0].assetId");
     const after = captureLiveState();
     expect(after.snapshot).toEqual(before.snapshot);
     expect(after.assets).toEqual(before.assets);
@@ -133,7 +133,16 @@ describe("deserializeProject dry-run safety", () => {
     expect(snapshot.nodes[0]?.name).toBe("Cube");
 
     expect(assetStore.getAssets()).toEqual([]);
-    expect(animationStore.getClip()).toEqual(project.animation);
+    const loadedClip = animationStore.getClip();
+    expect(loadedClip.durationSeconds).toBe(project.animation?.durationSeconds);
+    expect(loadedClip.tracks).toHaveLength(1);
+    expect(loadedClip.tracks[0]).toMatchObject({
+      objectId: "obj_1",
+      property: "position.x",
+      keyframes: project.animation?.tracks[0]?.keyframes,
+    });
+    const withBindPath = loadedClip.tracks[0] as unknown as { bindPath?: string };
+    expect(withBindPath.bindPath).toBe("Cube");
     expect(sceneStore.getCamera()?.fov).toBe(45);
   });
 
@@ -178,6 +187,31 @@ describe("deserializeProject dry-run safety", () => {
     };
 
     await expect(deserializeProject(project)).rejects.toThrow();
+    const after = captureLiveState();
+    expect(after.snapshot).toEqual(before.snapshot);
+    expect(after.assets).toEqual(before.assets);
+    expect(after.clip).toEqual(before.clip);
+    expect(after.dirty).toBe(false);
+  });
+
+  it("keeps live state unchanged when migrated legacy input is invalid", async () => {
+    const before = captureLiveState();
+    const legacyBadInput = {
+      version: 1,
+      objects: [
+        {
+          id: "obj_legacy",
+          name: "LegacyBroken",
+          geometryType: "invalid-geo",
+          color: 0xffffff,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      ],
+    };
+
+    await expect(deserializeProject(legacyBadInput as unknown as ProjectData)).rejects.toThrow();
     const after = captureLiveState();
     expect(after.snapshot).toEqual(before.snapshot);
     expect(after.assets).toEqual(before.assets);

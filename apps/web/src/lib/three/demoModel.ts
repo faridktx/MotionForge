@@ -11,7 +11,7 @@ import {
   type ImportSceneSummary,
 } from "./importGltf.js";
 
-export const BUILT_IN_DEMO_MODEL_URL = "/assets/demo-model.glb";
+export const BUILT_IN_DEMO_MODEL_URL = `${import.meta.env.BASE_URL}assets/demo-model.glb`;
 export const BUILT_IN_DEMO_MODEL_NAME = "demo-model.glb";
 
 interface ResolveBuiltInDemoModelImportPayloadOptions {

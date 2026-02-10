@@ -9,6 +9,18 @@ const buildDate = new Date().toISOString();
 export default defineConfig({
   base,
   plugins: [react()],
+  build: {
+    chunkSizeWarningLimit: 650,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("@ffmpeg/")) return "ffmpeg";
+          if (id.includes("/three/")) return "three-runtime";
+          return undefined;
+        },
+      },
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(`${packageVersion}-${commitHash}`),
     __BUILD_DATE__: JSON.stringify(buildDate),

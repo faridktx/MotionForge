@@ -152,8 +152,59 @@ describe("validateProjectData", () => {
     expect(validateProjectData(valid)).toBe(true);
   });
 
+  it("accepts animation takes with valid ranges", () => {
+    const valid = {
+      version: 4,
+      objects: [
+        {
+          id: "obj_1",
+          name: "Cube",
+          bindPath: "Cube",
+          geometryType: "box",
+          color: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      ],
+      animation: {
+        durationSeconds: 3,
+        takes: [
+          { id: "take_idle", name: "Idle", startTime: 0, endTime: 2 },
+          { id: "take_recoil", name: "Recoil", startTime: 2, endTime: 2.4 },
+        ],
+        tracks: [],
+      },
+    };
+    expect(validateProjectData(valid)).toBe(true);
+  });
+
+  it("rejects invalid take range", () => {
+    const bad = {
+      version: 4,
+      objects: [
+        {
+          id: "obj_1",
+          name: "Cube",
+          bindPath: "Cube",
+          geometryType: "box",
+          color: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      ],
+      animation: {
+        durationSeconds: 3,
+        takes: [{ id: "take_bad", name: "Bad", startTime: 2.5, endTime: 2.4 }],
+        tracks: [],
+      },
+    };
+    expect(validateProjectData(bad)).toBe(false);
+  });
+
   it("rejects unsupported version", () => {
-    expect(validateProjectData({ version: 4, objects: [] })).toBe(false);
+    expect(validateProjectData({ version: 5, objects: [] })).toBe(false);
   });
 
   it("rejects assets/modelInstances in pre-v3 project versions", () => {
@@ -235,6 +286,62 @@ describe("validateProjectData", () => {
     const result = validateProjectDataDetailed({ version: 9, objects: [] });
     expect(result.valid).toBe(false);
     expect(result.error).toContain("unsupported project version");
+  });
+
+  it("rejects v4 object without bindPath", () => {
+    const bad = {
+      version: 4,
+      objects: [
+        {
+          id: "obj_1",
+          name: "Cube",
+          geometryType: "box",
+          color: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      ],
+    };
+    expect(validateProjectData(bad)).toBe(false);
+  });
+
+  it("accepts v4 object with valid bindPath", () => {
+    const good = {
+      version: 4,
+      objects: [
+        {
+          id: "obj_1",
+          name: "Cube",
+          bindPath: "Scene/Cube",
+          geometryType: "box",
+          color: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      ],
+    };
+    expect(validateProjectData(good)).toBe(true);
+  });
+
+  it("rejects invalid bindPath characters", () => {
+    const bad = {
+      version: 4,
+      objects: [
+        {
+          id: "obj_1",
+          name: "Cube",
+          bindPath: "/Scene//Cube",
+          geometryType: "box",
+          color: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      ],
+    };
+    expect(validateProjectData(bad)).toBe(false);
   });
 
   it("accepts a v3 project with embedded gltf assets and model instances", () => {

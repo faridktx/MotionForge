@@ -6,6 +6,9 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-release:
     runs-on: ubuntu-latest
@@ -27,6 +30,13 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Validate semver tag
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z]+)*$ ]]; then
+            echo "Tag ${GITHUB_REF_NAME} is not a valid semver release tag (expected vX.Y.Z)."
+            exit 1
+          fi
+
       - name: Gate
         run: pnpm gate
 
@@ -43,15 +53,91 @@ jobs:
           }
           EOF
 
-      - name: Zip dist artifact
+      - name: Write build manifest
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const crypto = require("node:crypto");
+
+          const distDir = path.resolve("apps/web/dist");
+          const files = [];
+
+          function walk(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const absolute = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                walk(absolute);
+                continue;
+              }
+              const bytes = fs.readFileSync(absolute);
+              files.push({
+                path: path.relative(distDir, absolute).replace(/\\\\/g, "/"),
+                size: bytes.byteLength,
+                sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+              });
+            }
+          }
+
+          walk(distDir);
+          files.sort((a, b) => a.path.localeCompare(b.path));
+
+          const manifest = {
+            tag: process.env.GITHUB_REF_NAME,
+            commit: process.env.GITHUB_SHA,
+            builtAt: new Date().toISOString(),
+            fileCount: files.length,
+            files,
+          };
+
+          fs.writeFileSync(
+            path.join(distDir, "build-manifest.json"),
+            JSON.stringify(manifest, null, 2),
+            "utf8",
+          );
+          NODE
+
+      - name: Write release notes template
         run: |
           mkdir -p out
+          cat > out/release-notes.md <<EOF
+          ## MotionForge ${GITHUB_REF_NAME}
+
+          This release contains production web artifacts built from commit \`${GITHUB_SHA}\`.
+
+          ### Included Artifacts
+          - \`motionforge-web-${GITHUB_REF_NAME}.zip\`
+          - \`version-metadata-${GITHUB_REF_NAME}.json\`
+          - \`build-manifest-${GITHUB_REF_NAME}.json\`
+
+          ### Verification
+          - Gate command (\`pnpm gate\`) passed in CI.
+          - Build manifest includes per-file SHA-256 hashes for dist integrity checks.
+          EOF
+
+      - name: Zip dist artifact
+        run: |
           cd apps/web/dist
           zip -r ../../../out/motionforge-web-${GITHUB_REF_NAME}.zip .
+          cp version-metadata.json ../../../out/version-metadata-${GITHUB_REF_NAME}.json
+          cp build-manifest.json ../../../out/build-manifest-${GITHUB_REF_NAME}.json
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
           name: motionforge-web-${{ github.ref_name }}
-          path: out/motionforge-web-${{ github.ref_name }}.zip
+          path: |
+            out/motionforge-web-${{ github.ref_name }}.zip
+            out/version-metadata-${{ github.ref_name }}.json
+            out/build-manifest-${{ github.ref_name }}.json
 
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: out/release-notes.md
+          generate_release_notes: true
+          files: |
+            out/motionforge-web-${{ github.ref_name }}.zip
+            out/version-metadata-${{ github.ref_name }}.json
+            out/build-manifest-${{ github.ref_name }}.json

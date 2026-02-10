@@ -1,9 +1,9 @@
 // @vitest-environment node
 
-import { strToU8, zipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import type { ProjectData } from "./serialize.js";
-import { getBundleAssetFileName } from "./serialize.js";
+import { buildProjectBundleArtifact, getBundleAssetFileName } from "./serialize.js";
 import { parseProjectBundle } from "./bundle.js";
 
 const SAMPLE_ASSET_BYTES = new Uint8Array([1, 2, 3, 4, 5, 6]);
@@ -29,6 +29,7 @@ function createProjectFixture(): ProjectData {
       {
         id: "obj_100",
         name: "Robot",
+        bindPath: "Robot",
         assetId: "asset_1",
         position: [0, 0, 0],
         rotation: [0, 0, 0],
@@ -65,5 +66,31 @@ describe("parseProjectBundle", () => {
     const result = parseProjectBundle(new Uint8Array(zipped));
     expect(result.data).toBeNull();
     expect(result.error).toContain("missing asset payload");
+  });
+
+  it("bundle artifact includes manifest metadata", () => {
+    const project = createProjectFixture();
+    const artifact = buildProjectBundleArtifact(project);
+    const files = unzipSync(artifact.bytes);
+    expect(Object.keys(files)).toContain("motionforge-manifest.json");
+    const manifestRaw = files["motionforge-manifest.json"];
+    expect(manifestRaw).toBeTruthy();
+    const manifest = JSON.parse(strFromU8(manifestRaw!)) as {
+      version: number;
+      projectVersion: number;
+      primaryModelAssetId: string | null;
+      exportedAt: string;
+      takes: Array<{ id: string; name: string; startTime: number; endTime: number }>;
+      clipNaming: { pattern: string; fallbackTakeName: string };
+    };
+    expect(manifest.version).toBe(1);
+    expect(manifest.projectVersion).toBe(project.version);
+    expect(manifest.primaryModelAssetId).toBe("asset_1");
+    expect(typeof manifest.exportedAt).toBe("string");
+    expect(manifest.takes).toEqual([]);
+    expect(manifest.clipNaming).toEqual({
+      pattern: "<ProjectName>_<TakeName>",
+      fallbackTakeName: "Main",
+    });
   });
 });

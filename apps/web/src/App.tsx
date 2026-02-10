@@ -1,18 +1,26 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, lazy, Suspense } from "react";
 import { Panel } from "@motionforge/ui";
-import { Viewport } from "./components/Viewport.js";
 import { InspectorContent } from "./components/InspectorContent.js";
 import { HierarchyContent } from "./components/HierarchyContent.js";
 import { TopBar } from "./components/TopBar.js";
 import { Timeline } from "./components/Timeline.js";
 import { WalkthroughModal } from "./components/WalkthroughModal.js";
 import { OnboardingModal } from "./components/OnboardingModal.js";
+import { SampleGalleryModal } from "./components/SampleGalleryModal.js";
+import { AppErrorBoundary } from "./components/AppErrorBoundary.js";
 import { ToastHost } from "./components/ToastHost.js";
 import type { GizmoMode } from "./lib/three/gizmo/Gizmo.js";
 import { DEMO_PROJECT, hasSeenOnboarding, markOnboardingSeen } from "./lib/project/demoProject.js";
 import { deserializeProject } from "./lib/project/deserialize.js";
+import { downloadProjectJSON } from "./lib/project/serialize.js";
+import { isSafeModeEnabled, shouldRenderViewport } from "./lib/runtime/safeMode.js";
 import { toastStore } from "./state/toastStore.js";
 import { fileDialogStore } from "./state/fileDialogStore.js";
+
+const LazyViewport = lazy(async () => {
+  const mod = await import("./components/Viewport.js");
+  return { default: mod.Viewport };
+});
 
 function buildInfoLabel(): string {
   const date = new Date(__BUILD_DATE__);
@@ -21,7 +29,9 @@ function buildInfoLabel(): string {
 }
 
 export function App() {
+  const safeModeEnabled = isSafeModeEnabled(window.location.search);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(() => !hasSeenOnboarding());
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
   const closeHelp = useCallback(() => setHelpOpen(false), []);
@@ -55,14 +65,25 @@ export function App() {
     setHelpOpen(true);
   }, [markSeen]);
 
+  const openGalleryFromOnboarding = useCallback(() => {
+    markSeen();
+    setGalleryOpen(true);
+  }, [markSeen, setGalleryOpen]);
+
   const resetDemoFromHelp = useCallback(async () => {
     await loadDemo();
     setHelpOpen(false);
   }, [loadDemo]);
 
+  const openGalleryFromHelp = useCallback(() => {
+    setHelpOpen(false);
+    setGalleryOpen(true);
+  }, [setGalleryOpen, setHelpOpen]);
+
   return (
-    <div className="app-shell">
-      <TopBar onHelp={() => setHelpOpen(true)} />
+    <AppErrorBoundary>
+      <div className="app-shell">
+        <TopBar onHelp={() => setHelpOpen(true)} />
 
       <div className="app-layout">
         <div className="sidebar-left">
@@ -72,8 +93,21 @@ export function App() {
         </div>
 
         <div className="viewport">
-          <div className="mode-indicator">{modeLabel}</div>
-          <Viewport onModeChange={setGizmoMode} />
+          <div className="mode-indicator">{safeModeEnabled ? "Safe Mode" : modeLabel}</div>
+          {shouldRenderViewport(safeModeEnabled) ? (
+            <Suspense fallback={<div className="viewport-loading">Loading viewport...</div>}>
+              <LazyViewport onModeChange={setGizmoMode} />
+            </Suspense>
+          ) : (
+            <div className="viewport-loading">
+              <div>
+                <div>Safe mode is enabled (`?safe=1`). Viewport rendering is disabled.</div>
+                <button className="topbar-btn" onClick={downloadProjectJSON}>
+                  Export Project JSON
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="sidebar-right">
@@ -89,15 +123,23 @@ export function App() {
         </div>
       </div>
 
-      <WalkthroughModal open={helpOpen} onClose={closeHelp} onResetDemo={resetDemoFromHelp} />
-      <OnboardingModal
-        open={onboardingOpen}
-        onStartDemo={loadDemo}
-        onWatchControls={openHelpFromOnboarding}
-        onOpenProject={openProjectPicker}
-      />
-      <footer className="app-footer">Build {buildInfoLabel()}</footer>
-      <ToastHost />
-    </div>
+        <WalkthroughModal
+          open={helpOpen}
+          onClose={closeHelp}
+          onResetDemo={resetDemoFromHelp}
+          onOpenGallery={openGalleryFromHelp}
+        />
+        <OnboardingModal
+          open={onboardingOpen}
+          onStartDemo={loadDemo}
+          onOpenGallery={openGalleryFromOnboarding}
+          onWatchControls={openHelpFromOnboarding}
+          onOpenProject={openProjectPicker}
+        />
+        <SampleGalleryModal open={galleryOpen} onClose={() => setGalleryOpen(false)} />
+        <footer className="app-footer">Build {buildInfoLabel()}</footer>
+        <ToastHost />
+      </div>
+    </AppErrorBoundary>
   );
 }

@@ -1,0 +1,10 @@
+{
+  "name": "com.motionforge.unity",
+  "version": "0.1.0",
+  "displayName": "MotionForge Unity Integration",
+  "description": "Imports MotionForge bundle exports into Unity scenes and generates AnimationClips.",
+  "unity": "2022.3",
+  "author": {
+    "name": "MotionForge"
+  }
+}

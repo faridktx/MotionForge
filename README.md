@@ -7,15 +7,19 @@
   <img src="apps/web/public/motionforge-logo.svg" alt="MotionForge logo" width="96" height="96" />
 </p>
 
-MotionForge is a web-first 3D animation editor built with React, TypeScript, and Three.js. It combines scene editing, timeline keyframing, undo/redo, project persistence, glTF model import, and bundle export in a pnpm monorepo designed for production-quality iteration.
+MotionForge is a web-first 3D animation editor. It combines scene layout, timeline keyframing, model import, undo/redo, and video/project export in a fast browser workflow designed for iterative animation work.
 
-## Demo Features
+## Live Demo
+
+[MotionForge on GitHub Pages](https://faridabbasov.github.io/MotionForge/)
+
+## Feature Highlights
 
 - Three.js viewport with selection, transform gizmo, framing, and keyboard shortcuts.
-- Timeline v2 with multi-object lanes, keyframe selection/editing, copy/paste, nudge, and undo/redo.
-- Save/load/import/export workflow with project schema compatibility (`v1`/`v2`/`v3`).
-- glTF import with asset registry, material persistence, and bundle ZIP export.
-- Guardrails for invalid files and a strict `pnpm gate` quality pipeline.
+- Multi-lane timeline with keyframe CRUD, drag, snapping, copy/paste, and undo/redo.
+- Project persistence with compatibility for format versions `v1`, `v2`, and `v3`.
+- glTF import, asset registry, bundle ZIP export/import, and material overrides.
+- MP4/GIF export flow with fallback PNG sequence ZIP.
 
 ## Quickstart
 
@@ -26,30 +30,36 @@ pnpm -C apps/web dev
 
 Open `http://localhost:5173`.
 
-Live build: [MotionForge on GitHub Pages](https://faridabbasov.github.io/MotionForge/).
+## Demo in 60 Seconds
 
-## Demo In 60 Seconds
+1. Click `Start Demo Project` in onboarding.
+2. Press `Space` to preview animation playback.
+3. Drag one timeline keyframe, then press `Ctrl+Z`.
+4. Click `Export Video` and render a short 2-second MP4.
+5. Click `Export Bundle`, refresh, then `Import Bundle`.
 
-1. Click `Start Demo Project` on first run.
-2. Press `Space` to play animation.
-3. Drag one keyframe in the timeline and press `Ctrl+Z`.
-4. Click `Import Model` and choose a `.glb`.
-5. Click `Export Bundle` to download `project.json + assets`.
-
-## Key Docs
+## Documentation
 
 - Docs index: [docs/README.md](docs/README.md)
-- Project format: [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md)
-- Release gate: [RELEASE_GATE.md](RELEASE_GATE.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Deployment: [docs/DEPLOY.md](docs/DEPLOY.md)
+- Project format: [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md)
+- Demo smoke checklist: [docs/DEMO_SMOKE.md](docs/DEMO_SMOKE.md)
+- Deploy guide: [docs/DEPLOY.md](docs/DEPLOY.md)
 - Release process: [RELEASE.md](RELEASE.md)
+- Release gate: [RELEASE_GATE.md](RELEASE_GATE.md)
 
-## Roadmap (Short)
+## Release
 
-- Better graph/curve editing and interpolation UX.
-- More import/export targets and non-destructive asset relinking.
-- Collaboration and review workflows for teams.
+1. Run local gate: `pnpm gate`
+2. Create and push a semver tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
+3. GitHub Actions creates a release with web artifacts.
+
+Release artifacts include:
+- `motionforge-web-vX.Y.Z.zip`
+- `version-metadata-vX.Y.Z.json`
+- `build-manifest-vX.Y.Z.json`
+
+Publishing policy: releases are web build artifacts (no npm publish step).
 
 ## Contributing
 

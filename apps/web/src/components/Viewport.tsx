@@ -23,6 +23,7 @@ export function Viewport({ onModeChange }: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [statsEnabled, setStatsEnabled] = useState(() => rendererStatsStore.getEnabled());
   const [stats, setStats] = useState<RendererStatsSnapshot>({
+    fps: 0,
     drawCalls: 0,
     geometries: 0,
     textures: 0,
@@ -458,8 +459,19 @@ export function Viewport({ onModeChange }: ViewportProps) {
 
     // -- Render loop --
     let frameId = 0;
+    let fpsFrames = 0;
+    let fps = 0;
+    let lastFpsSample = performance.now();
     function animate() {
       frameId = requestAnimationFrame(animate);
+      fpsFrames += 1;
+      const now = performance.now();
+      const delta = now - lastFpsSample;
+      if (delta >= 500) {
+        fps = Math.round((fpsFrames * 1000) / delta);
+        fpsFrames = 0;
+        lastFpsSample = now;
+      }
       controls.update();
       gizmo.syncPosition();
       renderer.render(scene, camera);
@@ -469,6 +481,7 @@ export function Viewport({ onModeChange }: ViewportProps) {
     const statsTimer = window.setInterval(() => {
       if (!rendererStatsStore.getEnabled()) return;
       const next: RendererStatsSnapshot = {
+        fps,
         drawCalls: renderer.info.render.calls,
         geometries: renderer.info.memory.geometries,
         textures: renderer.info.memory.textures,
@@ -478,6 +491,7 @@ export function Viewport({ onModeChange }: ViewportProps) {
         return;
       }
       setStats((prev) => (
+        prev.fps === next.fps &&
         prev.drawCalls === next.drawCalls &&
         prev.geometries === next.geometries &&
         prev.textures === next.textures
@@ -514,6 +528,7 @@ export function Viewport({ onModeChange }: ViewportProps) {
       <div ref={containerRef} className="viewport-canvas-host" />
       {statsEnabled && (
         <div className="viewport-stats" aria-label="Renderer stats overlay">
+          <div>FPS: {stats.fps}</div>
           <div>Draw Calls: {stats.drawCalls}</div>
           <div>Geometries: {stats.geometries}</div>
           <div>Textures: {stats.textures}</div>

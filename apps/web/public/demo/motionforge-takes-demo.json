@@ -1,0 +1,49 @@
+{
+  "version": 4,
+  "objects": [
+    {
+      "id": "obj_cube",
+      "name": "Demo Cube",
+      "bindPath": "Demo_Cube",
+      "geometryType": "box",
+      "color": 4944127,
+      "metallic": 0.3,
+      "roughness": 0.6,
+      "position": [0, 0.5, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    }
+  ],
+  "animation": {
+    "durationSeconds": 2.4,
+    "takes": [
+      { "id": "take_idle", "name": "Idle", "startTime": 0, "endTime": 2 },
+      { "id": "take_recoil", "name": "Recoil", "startTime": 2, "endTime": 2.4 }
+    ],
+    "tracks": [
+      {
+        "objectId": "obj_cube",
+        "bindPath": "Demo_Cube",
+        "property": "position.y",
+        "keyframes": [
+          { "time": 0, "value": 0.5, "interpolation": "easeInOut" },
+          { "time": 1, "value": 0.58, "interpolation": "easeInOut" },
+          { "time": 2, "value": 0.5, "interpolation": "easeInOut" },
+          { "time": 2.08, "value": 0.45, "interpolation": "step" },
+          { "time": 2.4, "value": 0.5, "interpolation": "easeOut" }
+        ]
+      },
+      {
+        "objectId": "obj_cube",
+        "bindPath": "Demo_Cube",
+        "property": "rotation.x",
+        "keyframes": [
+          { "time": 0, "value": 0, "interpolation": "linear" },
+          { "time": 2, "value": 0, "interpolation": "linear" },
+          { "time": 2.08, "value": -0.18, "interpolation": "step" },
+          { "time": 2.4, "value": 0, "interpolation": "easeOut" }
+        ]
+      }
+    ]
+  }
+}

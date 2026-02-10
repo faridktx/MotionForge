@@ -16,12 +16,13 @@ import {
 } from "../lib/project/serialize.js";
 import { parseProjectBundle } from "../lib/project/bundle.js";
 import { runSoakTest } from "../lib/dev/soakHarness.js";
+import { runAgentScript, type AgentScriptAction } from "../lib/agent/scriptRunner.js";
 import { deserializeProject, newProject } from "../lib/project/deserialize.js";
 import {
-  exportVideoFromCanvas,
+  estimateVideoExportSeconds,
   validateVideoExportSettings,
   type VideoExportSettings,
-} from "../lib/export/videoExport.js";
+} from "../lib/export/videoExportConfig.js";
 import { toastStore } from "../state/toastStore.js";
 import { assetStore } from "../state/assetStore.js";
 import {
@@ -38,6 +39,16 @@ import {
 import { insertBuiltInDemoModel } from "../lib/three/demoModel.js";
 import { sceneStore } from "../state/sceneStore.js";
 import { collectReferencedAssetIdsFromModelRoots, findUnusedAssetIds } from "../lib/project/assetMaintenance.js";
+import { purgeUnusedAssetsWithConfirm } from "../lib/project/purgeUnusedAssets.js";
+import {
+  downloadOfflinePack,
+  isOfflinePackReady,
+  isOfflinePackSupported,
+} from "../lib/offline/offlinePack.js";
+import {
+  createOfflineCacheState,
+  nextOfflineCacheState,
+} from "../lib/offline/offlineCacheState.js";
 import {
   isNativeFileAccessSupported,
   readNativeFileAccessSettings,
@@ -60,6 +71,23 @@ interface PendingOpenState {
   nativeHandle: FileSystemFileHandle | null;
 }
 
+interface ProjectDiagnosticsState {
+  version: number;
+  objects: number;
+  primitiveObjects: number;
+  modelInstances: number;
+  assets: number;
+  externalAssets: number;
+  tracks: number;
+  durationSeconds: number;
+  payloadSizeBytes: number;
+}
+
+interface AgentConsolePlanInput {
+  projectJson?: string;
+  actions: AgentScriptAction[];
+}
+
 const DEFAULT_VIDEO_EXPORT_SETTINGS: VideoExportSettings = {
   format: "mp4",
   width: 1280,
@@ -72,6 +100,21 @@ const DEFAULT_VIDEO_EXPORT_SETTINGS: VideoExportSettings = {
 const AUTOSAVE_SECONDS_KEY = "motionforge_autosave_seconds_v1";
 const DEFAULT_AUTOSAVE_SECONDS = 15;
 const DEV_TOOLS_KEY = "motionforge_dev_tools_enabled_v1";
+const DEFAULT_AGENT_PLAN_JSON = JSON.stringify(
+  {
+    actions: [
+      {
+        action: "command.execute",
+        input: {
+          commandId: "agent.project.exportBundle",
+          payload: { includeData: false },
+        },
+      },
+    ],
+  },
+  null,
+  2,
+);
 
 function readAutosaveSeconds(): number {
   const raw = localStorage.getItem(AUTOSAVE_SECONDS_KEY);
@@ -86,6 +129,21 @@ function readDevToolsEnabled(): boolean {
   return localStorage.getItem(DEV_TOOLS_KEY) === "1";
 }
 
+function buildProjectDiagnosticsState(data: ReturnType<typeof serializeProject>, payloadSizeBytes: number): ProjectDiagnosticsState {
+  const assets = data.assets ?? [];
+  return {
+    version: data.version,
+    objects: data.objects.length + (data.modelInstances?.length ?? 0),
+    primitiveObjects: data.objects.length,
+    modelInstances: data.modelInstances?.length ?? 0,
+    assets: assets.length,
+    externalAssets: assets.filter((asset) => asset.source.mode === "external").length,
+    tracks: data.animation?.tracks.length ?? 0,
+    durationSeconds: data.animation?.durationSeconds ?? 0,
+    payloadSizeBytes,
+  };
+}
+
 export function TopBar({ onHelp }: TopBarProps) {
   const dirty = useDirtyState();
   const projectFileInputRef = useRef<HTMLInputElement>(null);
@@ -96,16 +154,25 @@ export function TopBar({ onHelp }: TopBarProps) {
   const [recentOpen, setRecentOpen] = useState(false);
   const [recentProjects, setRecentProjects] = useState(() => getRecentProjects());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsState, setDiagnosticsState] = useState<ProjectDiagnosticsState | null>(null);
   const [nativeEnabled, setNativeEnabled] = useState(() => readNativeFileAccessSettings().enabled);
   const [rendererStatsEnabled, setRendererStatsEnabled] = useState(() => rendererStatsStore.getEnabled());
   const [devToolsEnabled, setDevToolsEnabled] = useState(() => readDevToolsEnabled());
   const [soakRunning, setSoakRunning] = useState(false);
   const [soakStatus, setSoakStatus] = useState<string | null>(null);
+  const [agentPlanText, setAgentPlanText] = useState(DEFAULT_AGENT_PLAN_JSON);
+  const [agentRunStatus, setAgentRunStatus] = useState<string | null>(null);
+  const [agentRunReport, setAgentRunReport] = useState<string | null>(null);
+  const [agentRunInProgress, setAgentRunInProgress] = useState(false);
   const [videoExportOpen, setVideoExportOpen] = useState(false);
   const [videoExportRunning, setVideoExportRunning] = useState(false);
   const [videoExportProgress, setVideoExportProgress] = useState<string | null>(null);
   const [videoExportSettings, setVideoExportSettings] = useState<VideoExportSettings>(
     DEFAULT_VIDEO_EXPORT_SETTINGS,
+  );
+  const [offlineCacheState, setOfflineCacheState] = useState(() =>
+    createOfflineCacheState(isOfflinePackSupported()),
   );
   const [autosaveSeconds, setAutosaveSeconds] = useState(() => readAutosaveSeconds());
   const [pendingOpen, setPendingOpen] = useState<PendingOpenState | null>(null);
@@ -113,6 +180,7 @@ export function TopBar({ onHelp }: TopBarProps) {
   const [commandQuery, setCommandQuery] = useState("");
   const [commandActiveIndex, setCommandActiveIndex] = useState(0);
   const [commandRevision, setCommandRevision] = useState(0);
+  const [triggerCrash, setTriggerCrash] = useState(false);
   const commandInputRef = useRef<HTMLInputElement>(null);
   const soakAbortRef = useRef<AbortController | null>(null);
   const videoExportAbortRef = useRef<AbortController | null>(null);
@@ -142,6 +210,36 @@ export function TopBar({ onHelp }: TopBarProps) {
       }
     })();
   }, [refreshRecentProjects]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isOfflinePackSupported()) {
+      setOfflineCacheState((state) => nextOfflineCacheState(state, { type: "UNSUPPORTED" }));
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void (async () => {
+      try {
+        const ready = await isOfflinePackReady();
+        if (cancelled) return;
+        setOfflineCacheState((state) => (
+          ready ? nextOfflineCacheState(state, { type: "DOWNLOAD_READY" }) : state
+        ));
+      } catch {
+        if (cancelled) return;
+        setOfflineCacheState((state) => nextOfflineCacheState(state, {
+          type: "DOWNLOAD_FAILED",
+          reason: "status check failed",
+        }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     writeNativeFileAccessSettings({ enabled: nativeEnabled });
@@ -403,11 +501,20 @@ export function TopBar({ onHelp }: TopBarProps) {
       toastStore.show("No unused assets found", "info");
       return;
     }
-    for (const id of unusedIds) {
-      assetStore.removeAsset(id);
+    const result = purgeUnusedAssetsWithConfirm({
+      assetIds: assets.map((asset) => asset.id),
+      referencedAssetIds: referenced,
+      confirm: (message) => window.confirm(message),
+      removeAsset: (assetId) => assetStore.removeAsset(assetId),
+      markDirty: () => sceneStore.markDirty(),
+    });
+    if (result.status === "cancelled") {
+      toastStore.show("Purge cancelled", "info");
+      return;
     }
-    sceneStore.markDirty();
-    toastStore.show(`Purged ${unusedIds.length} unused asset(s)`, "success");
+    if (result.status === "purged") {
+      toastStore.show(`Purged ${result.unusedCount} unused asset(s)`, "success");
+    }
   }, []);
 
   const handleExport = useCallback(() => {
@@ -418,6 +525,8 @@ export function TopBar({ onHelp }: TopBarProps) {
   const handleOpenVideoExport = useCallback(() => {
     setVideoExportOpen(true);
     setVideoExportProgress(null);
+    // Lazy-load encoder runtime only when export UI is opened.
+    void import("../lib/export/videoExport.js");
   }, []);
 
   const handleStartVideoExport = useCallback(async () => {
@@ -439,6 +548,7 @@ export function TopBar({ onHelp }: TopBarProps) {
     setVideoExportProgress("Preparing export...");
 
     try {
+      const { exportVideoFromCanvas } = await import("../lib/export/videoExport.js");
       const result = await exportVideoFromCanvas(canvas, videoExportSettings, {
         signal: controller.signal,
         onProgress(progress) {
@@ -451,8 +561,17 @@ export function TopBar({ onHelp }: TopBarProps) {
       anchor.download = `motionforge-export-${Date.now()}.${result.extension}`;
       anchor.click();
       URL.revokeObjectURL(url);
-      setVideoExportProgress("Export complete");
-      toastStore.show("Video export complete", "success");
+      setVideoExportProgress(result.mode === "video" ? "Export complete" : "Fallback export complete");
+      if (result.mode === "video") {
+        toastStore.show(
+          result.encoderSource === "local"
+            ? "Video export complete (local encoder core)"
+            : "Video export complete",
+          "success",
+        );
+      } else {
+        toastStore.show("Encoder failed; exported PNG sequence zip fallback", "info");
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         setVideoExportProgress("Export canceled");
@@ -472,9 +591,58 @@ export function TopBar({ onHelp }: TopBarProps) {
     videoExportAbortRef.current?.abort();
   }, []);
 
+  const handleDownloadOfflinePack = useCallback(async () => {
+    if (!isOfflinePackSupported()) {
+      setOfflineCacheState((state) => nextOfflineCacheState(state, { type: "UNSUPPORTED" }));
+      toastStore.show("Offline pack is not supported in this browser", "info");
+      return;
+    }
+
+    try {
+      setOfflineCacheState((state) => nextOfflineCacheState(state, {
+        type: "DOWNLOAD_STARTED",
+        total: 0,
+      }));
+      const cachedCount = await downloadOfflinePack({
+        onStart(total) {
+          setOfflineCacheState((state) => nextOfflineCacheState(state, {
+            type: "DOWNLOAD_STARTED",
+            total,
+          }));
+        },
+        onProgress(progress) {
+          setOfflineCacheState((state) => nextOfflineCacheState(state, {
+            type: "DOWNLOAD_PROGRESS",
+            completed: progress.completed,
+            total: progress.total,
+          }));
+        },
+      });
+      setOfflineCacheState((state) => nextOfflineCacheState(state, { type: "DOWNLOAD_READY" }));
+      toastStore.show(`Offline pack ready (${cachedCount} files cached)`, "success");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "unknown error";
+      setOfflineCacheState((state) => nextOfflineCacheState(state, {
+        type: "DOWNLOAD_FAILED",
+        reason,
+      }));
+      toastStore.show(`Offline pack failed: ${reason}`, "error");
+    }
+  }, []);
+
   const handleExportBundle = useCallback(() => {
     downloadProjectBundle();
     toastStore.show("Bundle exported", "success");
+  }, []);
+
+  const handleOpenDiagnostics = useCallback(() => {
+    const data = serializeProject();
+    const json = JSON.stringify(data);
+    setDiagnosticsState(buildProjectDiagnosticsState(data, json.length));
+    setRecentOpen(false);
+    setSettingsOpen(false);
+    setCommandPaletteOpen(false);
+    setDiagnosticsOpen(true);
   }, []);
 
   const handleProjectFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -657,6 +825,54 @@ export function TopBar({ onHelp }: TopBarProps) {
     soakAbortRef.current?.abort();
   }, []);
 
+  const handleRunAgentPlan = useCallback(async () => {
+    if (agentRunInProgress) return;
+    setAgentRunInProgress(true);
+    setAgentRunStatus("Running agent plan...");
+
+    try {
+      const parsed = JSON.parse(agentPlanText) as AgentConsolePlanInput;
+      if (!parsed || !Array.isArray(parsed.actions)) {
+        throw new Error("Plan must include an actions array.");
+      }
+
+      const planProjectJson = typeof parsed.projectJson === "string"
+        ? parsed.projectJson
+        : JSON.stringify(serializeProject());
+      const result = await runAgentScript({
+        projectJson: planProjectJson,
+        actions: parsed.actions,
+      });
+
+      const report = JSON.stringify(result, null, 2);
+      setAgentRunReport(report);
+      if (result.error) {
+        setAgentRunStatus(`Agent plan failed: ${result.error}`);
+        toastStore.show(`Agent plan failed: ${result.error}`, "error");
+      } else {
+        setAgentRunStatus(`Agent plan complete (${result.reports.length} actions)`);
+        toastStore.show("Agent plan complete", "success");
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Invalid plan JSON";
+      setAgentRunStatus(`Agent plan failed: ${reason}`);
+      toastStore.show(`Agent plan failed: ${reason}`, "error");
+    } finally {
+      setAgentRunInProgress(false);
+    }
+  }, [agentPlanText, agentRunInProgress]);
+
+  const handleExportAgentReport = useCallback(() => {
+    if (!agentRunReport) return;
+    const blob = new Blob([agentRunReport], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `motionforge-agent-report-${Date.now()}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [agentRunReport]);
+
   useEffect(() => {
     return commandBus.subscribe(() => {
       setCommandRevision((value) => value + 1);
@@ -723,9 +939,16 @@ export function TopBar({ onHelp }: TopBarProps) {
         keywords: ["open", "file"],
         run: () => { void handleOpenNative(); },
       }),
+      commandBus.register({
+        id: "project.diagnostics",
+        title: "Project Diagnostics",
+        category: "Project",
+        keywords: ["diagnostics", "metadata", "project"],
+        run: handleOpenDiagnostics,
+      }),
     ];
     return () => unregister.forEach((dispose) => dispose());
-  }, [handleExport, handleImport, handleImportBundle, handleInsertDemoModel, handleNew, handleOpenNative, handleOpenVideoExport, handleSave]);
+  }, [handleExport, handleImport, handleImportBundle, handleInsertDemoModel, handleNew, handleOpenDiagnostics, handleOpenNative, handleOpenVideoExport, handleSave]);
 
   const filteredCommandActions = useMemo(
     () => {
@@ -737,6 +960,10 @@ export function TopBar({ onHelp }: TopBarProps) {
 
   const videoExportErrors = useMemo(
     () => validateVideoExportSettings(videoExportSettings),
+    [videoExportSettings],
+  );
+  const estimatedExportSeconds = useMemo(
+    () => estimateVideoExportSeconds(videoExportSettings),
     [videoExportSettings],
   );
 
@@ -780,6 +1007,10 @@ export function TopBar({ onHelp }: TopBarProps) {
       setCommandActiveIndex(filteredCommandActions.length - 1);
     }
   }, [commandActiveIndex, filteredCommandActions.length]);
+
+  if (triggerCrash) {
+    throw new Error("Manual crash trigger");
+  }
 
   return (
     <header className="topbar">
@@ -873,9 +1104,13 @@ export function TopBar({ onHelp }: TopBarProps) {
           <button className="topbar-btn" onClick={onHelp}>
             Help
           </button>
+          <button className="topbar-btn" onClick={handleOpenDiagnostics}>
+            Diagnostics
+          </button>
           <button className="topbar-btn" onClick={() => {
             setRecentOpen(false);
             setCommandPaletteOpen(false);
+            setDiagnosticsOpen(false);
             setSettingsOpen((open) => !open);
           }}>
             Settings
@@ -938,6 +1173,34 @@ export function TopBar({ onHelp }: TopBarProps) {
               Native file access is not supported in this browser. Falling back to upload/download.
             </div>
           )}
+          <div className="topbar-settings-note">
+            Export dependencies:{" "}
+            <b>
+              {offlineCacheState.status === "ready"
+                ? "ready"
+                : offlineCacheState.status === "not-supported"
+                  ? "not supported"
+                  : "downloading"}
+            </b>
+            {offlineCacheState.status === "downloading" && offlineCacheState.total > 0
+              ? ` (${offlineCacheState.completed}/${offlineCacheState.total})`
+              : ""}
+          </div>
+          <div className="topbar-settings-note">{offlineCacheState.message}</div>
+          <button
+            className="topbar-btn"
+            disabled={
+              offlineCacheState.status === "not-supported"
+              || (
+                offlineCacheState.status === "downloading"
+                && offlineCacheState.total > 0
+                && offlineCacheState.completed < offlineCacheState.total
+              )
+            }
+            onClick={() => { void handleDownloadOfflinePack(); }}
+          >
+            Download Offline Pack
+          </button>
           <label className="topbar-settings-row">
             <span>Autosave (seconds)</span>
             <input
@@ -990,6 +1253,37 @@ export function TopBar({ onHelp }: TopBarProps) {
                 </button>
               )}
               {soakStatus && <div className="topbar-settings-note">{soakStatus}</div>}
+              <button className="topbar-btn" onClick={() => setTriggerCrash(true)}>
+                Trigger Test Crash
+              </button>
+
+              <div className="topbar-devtools-divider" />
+              <div className="topbar-settings-note">Agent Console (JSON plan runner)</div>
+              <textarea
+                className="topbar-agent-textarea"
+                value={agentPlanText}
+                onChange={(event) => setAgentPlanText(event.target.value)}
+                rows={10}
+                spellCheck={false}
+              />
+              <div className="topbar-devtools-actions">
+                <button
+                  className="topbar-btn"
+                  disabled={agentRunInProgress}
+                  onClick={() => {
+                    void handleRunAgentPlan();
+                  }}
+                >
+                  {agentRunInProgress ? "Running..." : "Run Agent Plan"}
+                </button>
+                <button className="topbar-btn" disabled={!agentRunReport} onClick={handleExportAgentReport}>
+                  Export Agent Report
+                </button>
+              </div>
+              {agentRunStatus && <div className="topbar-settings-note">{agentRunStatus}</div>}
+              {agentRunReport && (
+                <pre className="topbar-agent-report">{agentRunReport}</pre>
+              )}
             </div>
           )}
           <div className="topbar-settings-actions">
@@ -1163,6 +1457,11 @@ export function TopBar({ onHelp }: TopBarProps) {
               {videoExportErrors.length > 0 && (
                 <div className="topbar-settings-note">{videoExportErrors[0]}</div>
               )}
+              {videoExportErrors.length === 0 && !videoExportRunning && (
+                <div className="topbar-settings-note">
+                  Estimated export time: ~{estimatedExportSeconds.toFixed(1)}s
+                </div>
+              )}
               {videoExportProgress && (
                 <div className="topbar-settings-note">{videoExportProgress}</div>
               )}
@@ -1207,21 +1506,37 @@ export function TopBar({ onHelp }: TopBarProps) {
               <section className="modal-section">
                 <div><b>File:</b> {pendingOpen.fileName}</div>
                 <div><b>Size:</b> {Math.round(pendingOpen.sizeBytes / 1024)} KB</div>
-                <div><b>Supported versions:</b> 1, 2, 3</div>
+                <div><b>Supported versions:</b> 1, 2, 3, 4</div>
               </section>
               <section className="modal-section">
                 <h3>Validation Summary</h3>
                 {pendingOpen.validation.data ? (
-                  <ul>
-                    <li><b>Version:</b> {pendingOpen.validation.data.version}</li>
-                    <li><b>Objects:</b> {pendingOpen.validation.data.objects.length + (pendingOpen.validation.data.modelInstances?.length ?? 0)}</li>
-                    <li><b>Primitive objects:</b> {pendingOpen.validation.data.objects.length}</li>
-                    <li><b>Model instances:</b> {pendingOpen.validation.data.modelInstances?.length ?? 0}</li>
-                    <li><b>Assets:</b> {pendingOpen.validation.data.assets?.length ?? 0}</li>
-                    <li><b>Tracks:</b> {pendingOpen.validation.data.animation?.tracks.length ?? 0}</li>
-                    <li><b>Animation duration:</b> {pendingOpen.validation.data.animation?.durationSeconds ?? 0}s</li>
-                    <li><b>Estimated payload:</b> {Math.round(pendingOpen.sizeBytes / 1024)} KB</li>
-                  </ul>
+                  (() => {
+                    const diagnostics = buildProjectDiagnosticsState(
+                      pendingOpen.validation.data,
+                      pendingOpen.sizeBytes,
+                    );
+                    return (
+                      <>
+                        <ul>
+                          <li><b>Version:</b> {diagnostics.version}</li>
+                          <li><b>Objects:</b> {diagnostics.objects}</li>
+                          <li><b>Primitive objects:</b> {diagnostics.primitiveObjects}</li>
+                          <li><b>Model instances:</b> {diagnostics.modelInstances}</li>
+                          <li><b>Assets:</b> {diagnostics.assets}</li>
+                          <li><b>External assets:</b> {diagnostics.externalAssets}</li>
+                          <li><b>Tracks:</b> {diagnostics.tracks}</li>
+                          <li><b>Animation duration:</b> {diagnostics.durationSeconds}s</li>
+                          <li><b>Estimated payload:</b> {Math.round(diagnostics.payloadSizeBytes / 1024)} KB</li>
+                        </ul>
+                        {diagnostics.externalAssets > 0 && (
+                          <div className="topbar-settings-note">
+                            Warning: external assets are references and may not be reconstructable on this machine.
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()
                 ) : (
                   <div className="topbar-settings-note">
                     {pendingOpen.validation.error ?? "Unknown validation error"}
@@ -1238,6 +1553,43 @@ export function TopBar({ onHelp }: TopBarProps) {
                   onClick={() => { void confirmOpenCandidate(); }}
                 >
                   Replace Current Scene
+                </button>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+      {diagnosticsOpen && diagnosticsState && (
+        <div className="modal-overlay">
+          <div className="modal modal--open-review" role="dialog" aria-modal="true" aria-label="Project Diagnostics">
+            <div className="modal-header">
+              <h2>Project Diagnostics</h2>
+              <button className="modal-close" onClick={() => setDiagnosticsOpen(false)} aria-label="Close">
+                &times;
+              </button>
+            </div>
+            <div className="modal-body">
+              <section className="modal-section">
+                <ul>
+                  <li><b>Version:</b> {diagnosticsState.version}</li>
+                  <li><b>Objects:</b> {diagnosticsState.objects}</li>
+                  <li><b>Primitive objects:</b> {diagnosticsState.primitiveObjects}</li>
+                  <li><b>Model instances:</b> {diagnosticsState.modelInstances}</li>
+                  <li><b>Assets:</b> {diagnosticsState.assets}</li>
+                  <li><b>External assets:</b> {diagnosticsState.externalAssets}</li>
+                  <li><b>Tracks:</b> {diagnosticsState.tracks}</li>
+                  <li><b>Animation duration:</b> {diagnosticsState.durationSeconds}s</li>
+                  <li><b>Payload size:</b> {Math.round(diagnosticsState.payloadSizeBytes / 1024)} KB</li>
+                </ul>
+                {diagnosticsState.externalAssets > 0 && (
+                  <div className="topbar-settings-note">
+                    Warning: this project references external assets that are not reconstructable from JSON alone.
+                  </div>
+                )}
+              </section>
+              <section className="onboarding-actions">
+                <button className="topbar-btn topbar-btn--primary" onClick={() => setDiagnosticsOpen(false)}>
+                  Close
                 </button>
               </section>
             </div>

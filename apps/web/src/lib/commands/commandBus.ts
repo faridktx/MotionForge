@@ -5,14 +5,22 @@ export interface CommandDefinition {
   shortcutLabel?: string;
   keywords?: string[];
   isEnabled?: () => boolean;
-  run: () => void;
+  run: (payload?: unknown) => unknown | Promise<unknown>;
 }
 
 export interface CommandExecuteOptions {
   respectInputFocus?: boolean;
+  payload?: unknown;
 }
 
 type Listener = () => void;
+
+export interface CommandExecuteResult {
+  executed: boolean;
+  result?: unknown;
+  error?: string;
+  reason?: "missing" | "focused-input" | "disabled" | "failed";
+}
 
 function isInputElement(element: Element | null): boolean {
   if (!(element instanceof HTMLElement)) return false;
@@ -53,8 +61,47 @@ class CommandBus {
       return false;
     }
     if (!this.isEnabled(id)) return false;
-    command.run();
+    command.run(options.payload);
     return true;
+  }
+
+  async executeWithResult(id: string, options: CommandExecuteOptions = {}): Promise<CommandExecuteResult> {
+    const command = this.commands.get(id);
+    if (!command) {
+      return {
+        executed: false,
+        reason: "missing",
+        error: `Command "${id}" is not registered.`,
+      };
+    }
+    if (options.respectInputFocus !== false && isInputElement(document.activeElement)) {
+      return {
+        executed: false,
+        reason: "focused-input",
+        error: `Command "${id}" is blocked while editing text.`,
+      };
+    }
+    if (!this.isEnabled(id)) {
+      return {
+        executed: false,
+        reason: "disabled",
+        error: `Command "${id}" is disabled.`,
+      };
+    }
+
+    try {
+      const result = await command.run(options.payload);
+      return {
+        executed: true,
+        result,
+      };
+    } catch (error) {
+      return {
+        executed: false,
+        reason: "failed",
+        error: error instanceof Error ? error.message : "command execution failed",
+      };
+    }
   }
 
   filter(query: string): CommandDefinition[] {

@@ -6,12 +6,14 @@ const listeners = new Set<Listener>();
 let enabled = false;
 
 export interface RendererStatsSnapshot {
+  fps: number;
   drawCalls: number;
   geometries: number;
   textures: number;
 }
 
 let stats: RendererStatsSnapshot = {
+  fps: 0,
   drawCalls: 0,
   geometries: 0,
   textures: 0,
@@ -46,6 +48,7 @@ export const rendererStatsStore = {
 
   setStats(next: RendererStatsSnapshot) {
     if (
+      stats.fps === next.fps &&
       stats.drawCalls === next.drawCalls &&
       stats.geometries === next.geometries &&
       stats.textures === next.textures

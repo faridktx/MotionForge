@@ -1,5 +1,12 @@
 export type Interpolation = "linear" | "step" | "easeIn" | "easeOut" | "easeInOut";
 
+export interface AnimationTake {
+  id: string;
+  name: string;
+  startTime: number;
+  endTime: number;
+}
+
 export interface Keyframe {
   time: number;
   value: number;
@@ -20,6 +27,7 @@ export interface Track {
 export interface Clip {
   durationSeconds: number;
   tracks: Track[];
+  takes?: AnimationTake[];
 }
 
 export function createEmptyClip(duration = 5): Clip {

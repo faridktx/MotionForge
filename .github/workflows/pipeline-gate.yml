@@ -1,0 +1,84 @@
+name: Pipeline Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  pipeline-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Gate
+        run: pnpm gate
+
+      - name: Build MCP package
+        run: pnpm mcp:build
+
+      - name: Pipeline preview (expect confirm required)
+        run: |
+          mkdir -p .motionforge/ci-preview
+          set +e
+          pnpm -C packages/mcp motionforge make-bundle \
+            --in apps/web/public/demo/motionforge-takes-demo.json \
+            --goal "idle loop then recoil" \
+            --out .motionforge/ci-preview > .motionforge/ci-preview/stdout.json
+          status=$?
+          set -e
+          if [ "$status" -ne 2 ]; then
+            echo "Expected exit code 2 for preview-only run, got $status"
+            exit 1
+          fi
+          test -f .motionforge/ci-preview/proof.json
+          grep -q "MF_ERR_CONFIRM_REQUIRED" .motionforge/ci-preview/stdout.json
+
+      - name: Pipeline apply
+        run: |
+          mkdir -p .motionforge/ci-apply
+          pnpm -C packages/mcp motionforge make-bundle \
+            --in apps/web/public/demo/motionforge-takes-demo.json \
+            --goal "idle loop then recoil" \
+            --out .motionforge/ci-apply \
+            --confirm > .motionforge/ci-apply/stdout.json
+          test -f .motionforge/ci-apply/project.json
+          test -f .motionforge/ci-apply/motionforge-bundle.zip
+          test -f .motionforge/ci-apply/motionforge-manifest.json
+          test -f .motionforge/ci-apply/proof.json
+
+      - name: Validate proof metadata
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const proof = JSON.parse(fs.readFileSync(".motionforge/ci-apply/proof.json", "utf8"));
+          if (!Array.isArray(proof.takes)) {
+            throw new Error("proof.takes missing");
+          }
+          const names = proof.takes.map((item) => item.name);
+          if (!names.includes("Idle") || !names.includes("Recoil")) {
+            throw new Error(`Expected Idle + Recoil takes, got: ${names.join(", ")}`);
+          }
+          if (!proof.outputs || typeof proof.outputs.bundleZipPath !== "string") {
+            throw new Error("proof.outputs.bundleZipPath missing");
+          }
+          if (!fs.existsSync(proof.outputs.bundleZipPath)) {
+            throw new Error(`Bundle path does not exist: ${proof.outputs.bundleZipPath}`);
+          }
+          NODE

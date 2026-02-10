@@ -5,15 +5,27 @@ All of the following must pass before any merge to main.
 ## Phase 5 Expectations
 
 1. `pnpm gate` must pass.
-2. Manual smoke run must pass using `/Users/faridabbasov/dev/MotionForge/docs/DEMO_SMOKE.md`.
-3. Web-layer store tests must pass (`apps/web` vitest suite).
-4. Engine schema and animation operation tests must pass (`packages/engine` vitest suite).
-5. Import/export reliability and undo/redo behaviors must be validated by both automated tests and manual smoke.
+2. `pnpm mcp:build` must pass.
+3. MCP contract tests must pass (`pnpm -C packages/mcp test -- contract.test.ts`).
+4. `docs/DEMO_SMOKE.md` manual script must pass.
+5. `docs/MCP.md` usage flow must remain accurate.
+6. Agent planner tests must pass (`pnpm -C packages/agent test`).
+7. Unity package export contract must pass via MCP contract suite.
+8. Web-layer store tests must pass (`apps/web` vitest suite).
+9. Engine schema and animation operation tests must pass (`packages/engine` vitest suite).
+10. Import/export reliability and undo/redo behaviors must be validated by both automated tests and manual smoke.
+11. Pipeline gate must pass:
+   - preview-only CLI run returns `MF_ERR_CONFIRM_REQUIRED` and writes `proof.json`
+   - confirmed CLI run writes `project.json`, `motionforge-bundle.zip`, `motionforge-manifest.json`, and `proof.json`
+12. Unity import verification checklist in `docs/UNITY_VERIFY.md` must be runnable and up to date.
 
 ## Gate Command
 
 ```bash
 pnpm gate
+pnpm mcp:build
+pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --out .motionforge/ci-preview
+pnpm -C packages/mcp motionforge make-bundle --in apps/web/public/demo/motionforge-takes-demo.json --goal "idle loop then recoil" --out .motionforge/ci-apply --confirm
 ```
 
 This runs the following checks in order, stopping on first failure:
@@ -34,7 +46,7 @@ This runs the following checks in order, stopping on first failure:
 
 - Runs Vitest in all packages that define a `test` script
 - All tests must pass
-- Currently covers: `packages/engine`
+- Currently covers: `packages/engine`, `packages/agent`, `packages/mcp`, `apps/web`
 
 ### 4. Build (`pnpm build`)
 
@@ -51,6 +63,24 @@ This runs the following checks in order, stopping on first failure:
 
 - Run only when an E2E suite exists in the repo
 - Current status: intentionally not configured (see `/Users/faridabbasov/dev/MotionForge/docs/E2E_DECISION.md`)
+
+### 7. MCP Contract Test
+
+- Run `pnpm -C packages/mcp test -- contract.test.ts`
+- Validates tool surface + stdio framing + staged load semantics
+
+### 8. Pipeline Gate Check
+
+- Run preview-only pipeline command (without `--confirm`)
+- Expect exit code `2` and `MF_ERR_CONFIRM_REQUIRED`
+- Validate preview proof artifact exists:
+  - `.motionforge/ci-preview/proof.json`
+- Run confirmed pipeline command (with `--confirm`)
+- Validate artifacts exist:
+  - `.motionforge/ci-apply/project.json`
+  - `.motionforge/ci-apply/motionforge-bundle.zip`
+  - `.motionforge/ci-apply/motionforge-manifest.json`
+  - `.motionforge/ci-apply/proof.json`
 
 ## Pass Criteria
 
