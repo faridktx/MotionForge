@@ -42,6 +42,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace UI package
+        run: pnpm -C packages/ui build
+
       - name: Build web app
         env:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
@@ -55,4 +58,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-

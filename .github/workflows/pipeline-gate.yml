@@ -35,42 +35,43 @@ jobs:
 
       - name: Pipeline preview (expect confirm required)
         run: |
-          mkdir -p .motionforge/ci-preview
+          PREVIEW_DIR="$GITHUB_WORKSPACE/.motionforge/ci-preview"
+          mkdir -p "$PREVIEW_DIR"
           set +e
           pnpm -C packages/mcp motionforge make-bundle \
-            --in apps/web/public/demo/motionforge-takes-demo.json \
+            --in "$GITHUB_WORKSPACE/apps/web/public/demo/motionforge-takes-demo.json" \
             --goal "idle loop then recoil" \
             --unity \
-            --out .motionforge/ci-preview > .motionforge/ci-preview/stdout.json
+            --out "$PREVIEW_DIR" > "$PREVIEW_DIR/stdout.json" 2>&1
           status=$?
           set -e
           if [ "$status" -ne 2 ]; then
             echo "Expected exit code 2 for preview-only run, got $status"
             exit 1
           fi
-          test -f .motionforge/ci-preview/proof.json
-          grep -q "MF_ERR_CONFIRM_REQUIRED" .motionforge/ci-preview/stdout.json
+          test -f "$PREVIEW_DIR/proof.json"
+          grep -q "MF_ERR_CONFIRM_REQUIRED" "$PREVIEW_DIR/stdout.json"
 
       - name: Pipeline apply
         run: |
-          mkdir -p .motionforge/ci-apply
+          APPLY_DIR="$GITHUB_WORKSPACE/.motionforge/ci-apply"
+          mkdir -p "$APPLY_DIR"
           pnpm -C packages/mcp motionforge make-bundle \
-            --in apps/web/public/demo/motionforge-takes-demo.json \
+            --in "$GITHUB_WORKSPACE/apps/web/public/demo/motionforge-takes-demo.json" \
             --goal "idle loop then recoil" \
             --unity \
-            --out .motionforge/ci-apply \
-            --confirm > .motionforge/ci-apply/stdout.json
-          test -f .motionforge/ci-apply/project.json
-          test -f .motionforge/ci-apply/motionforge-bundle.zip
-          test -f .motionforge/ci-apply/motionforge-manifest.json
-          test -f .motionforge/ci-apply/proof.json
+            --out "$APPLY_DIR" \
+            --confirm > "$APPLY_DIR/stdout.json" 2>&1
+          test -f "$APPLY_DIR/project.json"
+          test -f "$APPLY_DIR/motionforge-bundle.zip"
+          test -f "$APPLY_DIR/motionforge-manifest.json"
+          test -f "$APPLY_DIR/proof.json"
 
       - name: Validate proof and unity bundle invariants
         run: |
           node <<'NODE'
           const fs = require("node:fs");
-          const path = require("node:path");
-          const { unzipSync } = require("fflate");
+          const { execFileSync } = require("node:child_process");
 
           const proof = JSON.parse(fs.readFileSync(".motionforge/ci-apply/proof.json", "utf8"));
           if (!Array.isArray(proof.takes)) {
@@ -90,16 +91,17 @@ jobs:
             throw new Error(`Bundle path does not exist: ${proof.outputs.bundleZipPath}`);
           }
 
-          const zipBytes = fs.readFileSync(proof.outputs.bundleZipPath);
-          const files = unzipSync(zipBytes);
-          if (!files["project.json"]) {
+          const zipList = execFileSync("unzip", ["-l", proof.outputs.bundleZipPath], {
+            encoding: "utf8",
+          });
+          if (!zipList.includes("project.json")) {
             throw new Error("Bundle missing project.json");
           }
-          if (!files["motionforge-manifest.json"]) {
+          if (!zipList.includes("motionforge-manifest.json")) {
             throw new Error("Bundle missing motionforge-manifest.json");
           }
 
-          const project = JSON.parse(Buffer.from(files["project.json"]).toString("utf8"));
+          const project = JSON.parse(fs.readFileSync(".motionforge/ci-apply/project.json", "utf8"));
           if (!project.animation || !Array.isArray(project.animation.takes) || project.animation.takes.length < 2) {
             throw new Error("project.json missing expected animation.takes[]");
           }
