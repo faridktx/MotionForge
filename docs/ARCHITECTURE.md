@@ -52,6 +52,25 @@ The gizmo is a custom implementation using Three.js primitives (no external libr
 - **Rotate** (E): Torus handles, world-axis-locked rotation using ray-plane intersection and quaternion delta
 - **Scale** (R): Arrow handles with cube tips, axis-constrained scaling
 
+## Direct Viewport Drag
+
+The viewport supports direct object dragging without touching gizmo handles.
+
+### Interaction priority
+
+1. Gizmo handle hit has highest priority (gizmo drag starts).
+2. Object body hit starts direct drag.
+3. Orbit controls run only when pointer is on empty space.
+
+### Drag semantics
+
+- Default mode drags in a ground plane (XZ) at the object's start `y`.
+- Hold `Shift` during drag to use a camera-facing plane.
+- Hold `Ctrl` or `Alt` during drag to snap movement to `0.1` units.
+- Playback is paused when direct drag starts.
+- `Esc` cancels active direct drag (reverts to start transform, no dirty mark).
+- Drag end commits one undo step (`Direct Drag`) and marks scene dirty once.
+
 ## Scene Store
 
 `sceneStore.ts` is the single source of truth for the scene graph at the application level.
@@ -69,7 +88,7 @@ The gizmo is a custom implementation using Three.js primitives (no external libr
 | ----------- | -------------------------------------------- |
 | `selection` | Selected object changes                      |
 | `objects`   | Object added, removed, or renamed            |
-| `transform` | Transform edited via inspector or gizmo      |
+| `transform` | Transform edited via inspector, gizmo, or direct drag |
 
 ### React hooks
 
@@ -363,13 +382,15 @@ Shortcuts are bound in viewport, but route through `commandBus` commands.
 | W         | Translate mode                            |
 | E         | Rotate mode                               |
 | R         | Scale mode                                |
+| Shift     | Direct drag: camera-plane mode (while dragging) |
+| Ctrl / Alt| Direct drag: 0.1-unit snap (while dragging) |
 | K         | Insert transform keyframes for selected object |
 | Space     | Play / pause animation                    |
 | F         | Frame selected object (or reset to origin)|
 | Shift+F   | Frame all selectable objects              |
 | G         | Toggle grid and axes visibility           |
 | Ctrl+K    | Open command palette                      |
-| Esc       | Cancel gizmo drag / clear selection       |
+| Esc       | Cancel direct/gizmo drag / clear selection |
 | Delete    | Delete selected timeline keyframes        |
 | Wheel     | Timeline zoom (when pointer is over timeline) |
 | Ctrl+Z    | Undo                                      |

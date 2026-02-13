@@ -197,7 +197,38 @@ Expected: failed open/import performs zero live scene mutation.
 
 Expected: overlay updates live; purge reports whether unused assets were removed without breaking scene content.
 
-### 6) Rotation axis lock consistency (90s)
+### 6) Direct viewport drag: primitives + modifiers (120s)
+
+1. Select `Cube`.
+2. Click-drag cube body (not gizmo handles).
+3. Confirm movement is on ground plane (`X/Z`) and `Y` stays constant.
+4. Repeat drag while holding `Ctrl` (or `Alt`).
+5. Confirm position snaps in `0.1` increments.
+6. Repeat drag while holding `Shift`.
+7. Confirm camera-plane drag mode is active (vertical movement is now allowed).
+8. Start a direct drag, press `Esc` before release.
+9. Confirm object returns exactly to pre-drag position.
+10. Perform one completed direct drag, then press `Ctrl+Z` and `Ctrl+Y`.
+
+Expected: direct drag works on object body, modifiers apply correctly, `Esc` cancels without commit, and one completed drag maps to one undo step.
+
+### 6a) Direct drag on imported glTF node (60s)
+
+1. Import a `.glb` model (`Import Model`).
+2. Click-drag an imported visible mesh node in viewport.
+3. Undo/redo once.
+
+Expected: imported node is movable via direct drag and undo/redo remains atomic.
+
+### 6b) Interaction priority: gizmo over direct drag (45s)
+
+1. Select any object and show gizmo (`W`, `E`, or `R`).
+2. Drag a gizmo handle directly.
+3. Then drag object body away from handles.
+
+Expected: handle hit always starts gizmo drag; body hit starts direct drag; modes do not fight.
+
+### 6c) Rotation axis lock consistency (90s)
 
 1. Press `E` (rotate mode).
 2. Drag `X` ring: verify rotation is around X axis only.

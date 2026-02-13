@@ -197,6 +197,11 @@ export class Gizmo {
     return active.children;
   }
 
+  isPointerOverHandle(e: PointerEvent): boolean {
+    if (!this.target || !this.root.visible) return false;
+    return pickGizmoHandle(e, this.camera, this.canvas, this.getHandleMeshes()) !== null;
+  }
+
   private onPointerDown(e: PointerEvent) {
     if (e.button !== 0 || !this.target || !this.root.visible) return;
 
@@ -243,7 +248,8 @@ export class Gizmo {
     this.dragging = true;
     this.activeAxis = axis;
     this.callbacks.onDragStart?.();
-    e.stopPropagation();
+    e.stopImmediatePropagation();
+    e.preventDefault();
   }
 
   private onPointerMove(e: PointerEvent) {

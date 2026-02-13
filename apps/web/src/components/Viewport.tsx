@@ -5,6 +5,12 @@ import { disposeObject } from "../lib/three/disposeObject.js";
 import { raycastSelection } from "../lib/three/selection.js";
 import { computeBoundingSphere, frameSphere } from "../lib/three/cameraFraming.js";
 import { Gizmo, type GizmoMode } from "../lib/three/gizmo/Gizmo.js";
+import { DirectDragSession } from "../lib/three/directDragSession.js";
+import {
+  computeDragPlane,
+  pointerRayToPlaneIntersection,
+  type DirectDragPlaneMode,
+} from "../lib/three/directDrag.js";
 import { sceneStore } from "../state/sceneStore.js";
 import { undoStore } from "../state/undoStore.js";
 import { animationStore } from "../state/animationStore.js";
@@ -18,6 +24,14 @@ interface ViewportProps {
 
 const HIGHLIGHT_EMISSIVE = new THREE.Color(0x335599);
 const DEFAULT_EMISSIVE = new THREE.Color(0x000000);
+const CLICK_DRAG_THRESHOLD_SQ = 9;
+const DIRECT_DRAG_SNAP_STEP = 0.1;
+
+function isTextInputFocused(): boolean {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return false;
+  return active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable;
+}
 
 export function Viewport({ onModeChange }: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -238,19 +252,217 @@ export function Viewport({ onModeChange }: ViewportProps) {
       gizmo.syncPosition();
     });
 
-    // -- Click selection --
+    // -- Click selection + direct drag --
+    interface PendingDirectDrag {
+      pointerId: number;
+      object: THREE.Object3D;
+      objectId: string;
+      startGroundHit: THREE.Vector3;
+      startCameraHit: THREE.Vector3;
+    }
+
     let pointerDownPos = { x: 0, y: 0 };
+    let pendingDirectDrag: PendingDirectDrag | null = null;
+    let activeDirectDrag: DirectDragSession | null = null;
+    let activeDirectDragPointerId: number | null = null;
+    let activeDirectDragAnchor: THREE.Vector3 | null = null;
+    let ignorePointerUpForClick: number | null = null;
+
+    function releasePointerCapture(pointerId: number | null) {
+      if (pointerId === null) return;
+      if (renderer.domElement.hasPointerCapture(pointerId)) {
+        renderer.domElement.releasePointerCapture(pointerId);
+      }
+    }
+
+    function resolveDragMode(e: PointerEvent): DirectDragPlaneMode {
+      return e.shiftKey ? "camera" : "ground";
+    }
+
+    function shouldSnapDrag(e: PointerEvent): boolean {
+      return e.ctrlKey || e.altKey;
+    }
+
+    function computePlaneHit(
+      e: PointerEvent,
+      anchor: THREE.Vector3,
+      mode: DirectDragPlaneMode,
+    ): THREE.Vector3 | null {
+      const plane = computeDragPlane(camera, anchor, mode);
+      return pointerRayToPlaneIntersection(e, camera, renderer.domElement, plane);
+    }
+
+    function cancelDirectDrag(): boolean {
+      if (!activeDirectDrag) return false;
+      const pointerId = activeDirectDragPointerId;
+      activeDirectDrag.cancel();
+      releasePointerCapture(pointerId);
+      if (pointerId !== null) {
+        ignorePointerUpForClick = pointerId;
+      }
+      activeDirectDrag = null;
+      activeDirectDragPointerId = null;
+      activeDirectDragAnchor = null;
+      pendingDirectDrag = null;
+      controls.enabled = true;
+      return true;
+    }
+
+    function finishDirectDrag() {
+      if (!activeDirectDrag) return;
+      activeDirectDrag.commit();
+      releasePointerCapture(activeDirectDragPointerId);
+      activeDirectDrag = null;
+      activeDirectDragPointerId = null;
+      activeDirectDragAnchor = null;
+      controls.enabled = true;
+    }
+
+    function startDirectDrag(e: PointerEvent): DirectDragSession | null {
+      if (!pendingDirectDrag) return null;
+      if (gizmo.isDragging()) return null;
+
+      const { object, objectId, startGroundHit, startCameraHit } = pendingDirectDrag;
+      if (sceneStore.getIdForObject(object) !== objectId) {
+        pendingDirectDrag = null;
+        controls.enabled = true;
+        return null;
+      }
+
+      if (animationStore.isPlaying()) {
+        animationStore.pause();
+      }
+      if (sceneStore.getSelectedId() !== objectId) {
+        sceneStore.setSelectedId(objectId);
+      }
+
+      activeDirectDrag = new DirectDragSession({
+        object,
+        label: "Direct Drag",
+        startGroundHit,
+        startCameraHit,
+        snapStep: DIRECT_DRAG_SNAP_STEP,
+      });
+      activeDirectDragPointerId = e.pointerId;
+      activeDirectDragAnchor = activeDirectDrag.getAnchorPosition();
+      if (!renderer.domElement.hasPointerCapture(e.pointerId)) {
+        renderer.domElement.setPointerCapture(e.pointerId);
+      }
+      pendingDirectDrag = null;
+      controls.enabled = false;
+      return activeDirectDrag;
+    }
 
     function onPointerDown(e: PointerEvent) {
       pointerDownPos = { x: e.clientX, y: e.clientY };
+      if (e.button !== 0) return;
+      if (gizmo.isDragging() || gizmo.isPointerOverHandle(e)) return;
+
+      const selectables = sceneStore.getAllUserObjects();
+      const hit = raycastSelection(e, camera, renderer.domElement, selectables);
+      const objectId = hit ? sceneStore.getIdForObject(hit) : null;
+      if (!hit || !objectId || isTextInputFocused()) {
+        pendingDirectDrag = null;
+        controls.enabled = true;
+        return;
+      }
+
+      const anchor = hit.position.clone();
+      const startGroundHit = computePlaneHit(e, anchor, "ground");
+      const startCameraHit = computePlaneHit(e, anchor, "camera");
+      if (!startGroundHit || !startCameraHit) {
+        pendingDirectDrag = null;
+        controls.enabled = true;
+        return;
+      }
+
+      pendingDirectDrag = {
+        pointerId: e.pointerId,
+        object: hit,
+        objectId,
+        startGroundHit,
+        startCameraHit,
+      };
+      controls.enabled = false;
+      if (!renderer.domElement.hasPointerCapture(e.pointerId)) {
+        renderer.domElement.setPointerCapture(e.pointerId);
+      }
+    }
+
+    function onPointerMove(e: PointerEvent) {
+      if (activeDirectDrag) {
+        if (e.pointerId !== activeDirectDragPointerId || !activeDirectDragAnchor) return;
+        const mode = resolveDragMode(e);
+        const currentHit = computePlaneHit(e, activeDirectDragAnchor, mode);
+        if (!currentHit) return;
+        activeDirectDrag.update({
+          mode,
+          currentHit,
+          snapEnabled: shouldSnapDrag(e),
+        });
+        e.preventDefault();
+        return;
+      }
+
+      if (!pendingDirectDrag) return;
+      if (pendingDirectDrag.pointerId !== e.pointerId) return;
+      const dx = e.clientX - pointerDownPos.x;
+      const dy = e.clientY - pointerDownPos.y;
+      if (dx * dx + dy * dy <= CLICK_DRAG_THRESHOLD_SQ) return;
+      const directDragSession = startDirectDrag(e);
+      if (!directDragSession || !activeDirectDragAnchor) {
+        pendingDirectDrag = null;
+        controls.enabled = true;
+        return;
+      }
+
+      const mode = resolveDragMode(e);
+      const currentHit = computePlaneHit(e, activeDirectDragAnchor, mode);
+      if (!currentHit) return;
+      directDragSession.update({
+        mode,
+        currentHit,
+        snapEnabled: shouldSnapDrag(e),
+      });
+      e.preventDefault();
+    }
+
+    function onPointerCancel(e: PointerEvent) {
+      if (activeDirectDrag && activeDirectDragPointerId === e.pointerId) {
+        cancelDirectDrag();
+        return;
+      }
+      if (pendingDirectDrag && pendingDirectDrag.pointerId === e.pointerId) {
+        pendingDirectDrag = null;
+        releasePointerCapture(e.pointerId);
+        controls.enabled = true;
+      }
     }
 
     function onPointerUp(e: PointerEvent) {
+      if (e.button !== 0) return;
+      if (ignorePointerUpForClick === e.pointerId) {
+        ignorePointerUpForClick = null;
+        releasePointerCapture(e.pointerId);
+        controls.enabled = true;
+        return;
+      }
+
+      if (activeDirectDrag && activeDirectDragPointerId === e.pointerId) {
+        finishDirectDrag();
+        return;
+      }
+
+      if (pendingDirectDrag && pendingDirectDrag.pointerId === e.pointerId) {
+        pendingDirectDrag = null;
+        releasePointerCapture(e.pointerId);
+        controls.enabled = true;
+      }
+
       if (gizmo.isDragging()) return;
       const dx = e.clientX - pointerDownPos.x;
       const dy = e.clientY - pointerDownPos.y;
-      if (dx * dx + dy * dy > 9) return;
-      if (e.button !== 0) return;
+      if (dx * dx + dy * dy > CLICK_DRAG_THRESHOLD_SQ) return;
 
       const selectables = sceneStore.getAllUserObjects();
       const hit = raycastSelection(e, camera, renderer.domElement, selectables);
@@ -263,7 +475,9 @@ export function Viewport({ onModeChange }: ViewportProps) {
     }
 
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointercancel", onPointerCancel);
 
     const frameSelected = () => {
       const sel = sceneStore.getSelectedObject();
@@ -339,6 +553,9 @@ export function Viewport({ onModeChange }: ViewportProps) {
         category: "Viewport",
         shortcutLabel: "Esc",
         run: () => {
+          if (cancelDirectDrag()) {
+            return;
+          }
           if (gizmo.isDragging()) {
             gizmo.cancelDrag();
           } else {
@@ -502,6 +719,12 @@ export function Viewport({ onModeChange }: ViewportProps) {
 
     // -- Cleanup --
     return () => {
+      if (activeDirectDrag) {
+        cancelDirectDrag();
+      } else if (activeDirectDragPointerId !== null || pendingDirectDrag) {
+        releasePointerCapture(activeDirectDragPointerId ?? pendingDirectDrag?.pointerId ?? null);
+      }
+      controls.enabled = true;
       cancelAnimationFrame(frameId);
       window.clearInterval(statsTimer);
       observer.disconnect();
@@ -512,7 +735,9 @@ export function Viewport({ onModeChange }: ViewportProps) {
       unregisterCommands.forEach((dispose) => dispose());
       renderer.domElement.removeEventListener("wheel", preventScroll);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointercancel", onPointerCancel);
       gizmo.dispose();
       controls.dispose();
       disposeObject(scene);

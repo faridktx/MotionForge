@@ -40,7 +40,7 @@ export function WalkthroughModal({ open, onClose, onResetDemo, onOpenGallery }: 
           <section className="modal-section">
             <h3>Navigation</h3>
             <ul>
-              <li><b>Orbit:</b> Left mouse drag</li>
+              <li><b>Orbit:</b> Left mouse drag on empty space</li>
               <li><b>Pan:</b> Right mouse drag</li>
               <li><b>Zoom:</b> Scroll wheel</li>
             </ul>
@@ -50,6 +50,7 @@ export function WalkthroughModal({ open, onClose, onResetDemo, onOpenGallery }: 
             <h3>Selection</h3>
             <ul>
               <li><b>Select:</b> Left click on an object</li>
+              <li><b>Direct Drag:</b> Left click-drag an object body (not gizmo handles)</li>
               <li><b>Deselect:</b> Click empty space or press Esc</li>
             </ul>
           </section>
@@ -61,7 +62,9 @@ export function WalkthroughModal({ open, onClose, onResetDemo, onOpenGallery }: 
                 <tr><td><kbd>W</kbd></td><td>Translate mode</td></tr>
                 <tr><td><kbd>E</kbd></td><td>Rotate mode</td></tr>
                 <tr><td><kbd>R</kbd></td><td>Scale mode</td></tr>
-                <tr><td><kbd>Esc</kbd></td><td>Cancel active gizmo drag, otherwise clear selection</td></tr>
+                <tr><td><kbd>Shift</kbd></td><td>While direct dragging, switch to camera-facing drag plane</td></tr>
+                <tr><td><kbd>Ctrl</kbd>/<kbd>Alt</kbd></td><td>While direct dragging, snap movement to 0.1 units</td></tr>
+                <tr><td><kbd>Esc</kbd></td><td>Cancel active direct/gizmo drag, otherwise clear selection</td></tr>
               </tbody>
             </table>
           </section>
