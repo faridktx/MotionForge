@@ -88,6 +88,7 @@ interface RuntimeState {
   data: RuntimeProjectData;
   selectedObjectId: string | null;
   dirty: boolean;
+  hierarchy: Record<string, string | null>;
 }
 
 interface CommandContext {
@@ -144,11 +145,13 @@ export interface RuntimeSnapshot {
       id: string;
       name: string;
       geometryType: string;
+      parentId?: string | null;
     }>;
     modelInstances: Array<{
       id: string;
       name: string;
       assetId: string;
+      parentId?: string | null;
     }>;
   };
   selection: {
@@ -442,7 +445,105 @@ function createEmptyState(): RuntimeState {
     },
     selectedObjectId: null,
     dirty: false,
+    hierarchy: {},
   };
+}
+
+function buildHierarchyFromData(data: RuntimeProjectData): Record<string, string | null> {
+  const hierarchy: Record<string, string | null> = {};
+  for (const object of data.objects) {
+    hierarchy[object.id] = null;
+  }
+  for (const instance of data.modelInstances ?? []) {
+    hierarchy[instance.id] = null;
+  }
+  return hierarchy;
+}
+
+function objectExists(state: RuntimeState, objectId: string): boolean {
+  return state.data.objects.some((item) => item.id === objectId) || (state.data.modelInstances ?? []).some((item) => item.id === objectId);
+}
+
+function findObjectById(state: RuntimeState, objectId: string): RuntimeObject | RuntimeModelInstance | null {
+  const primitive = state.data.objects.find((item) => item.id === objectId);
+  if (primitive) return primitive;
+  return (state.data.modelInstances ?? []).find((item) => item.id === objectId) ?? null;
+}
+
+function parseTuple3(value: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (!Array.isArray(value) || value.length !== 3) return fallback;
+  if (!value.every((item) => typeof item === "number" && Number.isFinite(item))) return fallback;
+  return [value[0], value[1], value[2]];
+}
+
+function parsePrimitiveType(value: unknown): RuntimeObject["geometryType"] {
+  if (value === "box" || value === "sphere" || value === "cone") return value;
+  throw new RuntimeError("MF_ERR_INVALID_INPUT", "scene.addPrimitive type must be one of box|sphere|cone.");
+}
+
+function primitiveBaseName(type: RuntimeObject["geometryType"]): string {
+  if (type === "box") return "Cube";
+  if (type === "sphere") return "Sphere";
+  return "Cone";
+}
+
+function nextObjectId(state: RuntimeState): string {
+  const used = new Set(state.data.objects.map((item) => item.id));
+  let max = 0;
+  for (const id of used) {
+    const match = /^obj_(\d+)$/.exec(id);
+    if (!match) continue;
+    const parsed = Number.parseInt(match[1], 10);
+    if (Number.isFinite(parsed)) {
+      max = Math.max(max, parsed);
+    }
+  }
+  let candidate = max + 1;
+  while (used.has(`obj_${candidate}`)) {
+    candidate += 1;
+  }
+  return `obj_${candidate}`;
+}
+
+function uniqueName(state: RuntimeState, baseName: string): string {
+  const names = state.data.objects.map((item) => item.name).concat((state.data.modelInstances ?? []).map((item) => item.name));
+  const exact = names.filter((name) => name === baseName).length;
+  if (exact === 0) return baseName;
+  let index = 2;
+  while (names.includes(`${baseName} ${index}`)) {
+    index += 1;
+  }
+  return `${baseName} ${index}`;
+}
+
+function isHierarchyCycle(hierarchy: Record<string, string | null>, childId: string, parentId: string): boolean {
+  let cursor: string | null = parentId;
+  while (cursor) {
+    if (cursor === childId) return true;
+    cursor = hierarchy[cursor] ?? null;
+  }
+  return false;
+}
+
+function removeTracksForObjectIds(clip: Clip | undefined, removedIds: Set<string>): Clip {
+  const source = clip ? deepClone(clip) : { durationSeconds: 5, tracks: [] };
+  source.tracks = source.tracks.filter((track) => !removedIds.has(track.objectId));
+  normalizeClip(source);
+  return stableTrackSort(source);
+}
+
+function duplicateTracks(clip: Clip | undefined, sourceId: string, targetId: string): Clip {
+  const source = clip ? deepClone(clip) : { durationSeconds: 5, tracks: [] };
+  const copies = source.tracks
+    .filter((track) => track.objectId === sourceId)
+    .map((track) => ({
+      ...deepClone(track),
+      objectId: targetId,
+      bindPath: track.bindPath ? track.bindPath.replace(sourceId, targetId) : track.bindPath,
+    }));
+  source.tracks.push(...copies);
+  normalizeClip(source);
+  return stableTrackSort(source);
 }
 
 function parseProject(json: string, maxJsonBytes: number): RuntimeProjectData {
@@ -517,6 +618,309 @@ export function createRuntime(options: RuntimeOptions = {}): RuntimeInstance {
         result: { selectedObjectId: ctx.state.selectedObjectId },
         events: [ctx.emit("selection.changed", { objectId: ctx.state.selectedObjectId })],
       };
+    },
+  });
+
+  commandBus.register({
+    id: "scene.selectById",
+    run(ctx, input) {
+      const id = (input as { id?: unknown })?.id;
+      if (typeof id !== "string" || id.length === 0) {
+        throw new RuntimeError("MF_ERR_INVALID_INPUT", "scene.selectById requires id.");
+      }
+      if (!objectExists(ctx.state, id)) {
+        throw new RuntimeError("MF_ERR_NOT_FOUND", `Object "${id}" was not found.`);
+      }
+      if (ctx.state.selectedObjectId === id) {
+        return { result: { objectId: id }, events: [] };
+      }
+      ctx.state.selectedObjectId = id;
+      return {
+        result: { objectId: id },
+        events: [ctx.emit("selection.changed", { objectId: id })],
+      };
+    },
+  });
+
+  commandBus.register({
+    id: "scene.selectByName",
+    run(ctx, input) {
+      const name = (input as { name?: unknown })?.name;
+      if (typeof name !== "string" || name.trim().length === 0) {
+        throw new RuntimeError("MF_ERR_INVALID_INPUT", "scene.selectByName requires name.");
+      }
+      const all = [...ctx.state.data.objects, ...(ctx.state.data.modelInstances ?? [])];
+      const exact = all.filter((item) => item.name === name.trim());
+      const matches = exact.length > 0 ? exact : all.filter((item) => item.name.toLowerCase() === name.trim().toLowerCase());
+      if (matches.length === 0) {
+        throw new RuntimeError("MF_ERR_NOT_FOUND", `Object name "${name}" was not found.`);
+      }
+      if (matches.length > 1) {
+        throw new RuntimeError(
+          "MF_ERR_AMBIGUOUS_NAME",
+          `Multiple objects match "${name}": ${matches.map((item) => item.id).join(", ")}`,
+        );
+      }
+      const [target] = matches;
+      if (ctx.state.selectedObjectId === target.id) {
+        return { result: { objectId: target.id }, events: [] };
+      }
+      ctx.state.selectedObjectId = target.id;
+      return {
+        result: { objectId: target.id },
+        events: [ctx.emit("selection.changed", { objectId: target.id })],
+      };
+    },
+  });
+
+  commandBus.register({
+    id: "scene.addPrimitive",
+    run(ctx, input) {
+      const payload = (input as {
+        type?: unknown;
+        name?: unknown;
+        at?: { position?: unknown; rotation?: unknown; scale?: unknown };
+        material?: { color?: unknown; metallic?: unknown; roughness?: unknown };
+      }) ?? {};
+      const type = parsePrimitiveType(payload.type);
+      const index = ctx.state.data.objects.length;
+      const column = index % 6;
+      const row = Math.floor(index / 6);
+      const defaultPosition: [number, number, number] = [(column - 2.5) * 0.6, 0.5, row * 0.6];
+      const objectId = nextObjectId(ctx.state);
+      const object: RuntimeObject = {
+        id: objectId,
+        name: uniqueName(
+          ctx.state,
+          typeof payload.name === "string" && payload.name.trim().length > 0 ? payload.name.trim() : primitiveBaseName(type),
+        ),
+        geometryType: type,
+        color: Math.max(
+          0,
+          Math.min(
+            0xffffff,
+            Math.round(typeof payload.material?.color === "number" ? payload.material.color : type === "box" ? 0x4488ff : type === "sphere" ? 0x44cc66 : 0xcc6644),
+          ),
+        ),
+        metallic: typeof payload.material?.metallic === "number" ? Math.max(0, Math.min(1, payload.material.metallic)) : 0,
+        roughness: typeof payload.material?.roughness === "number" ? Math.max(0, Math.min(1, payload.material.roughness)) : 1,
+        position: parseTuple3(payload.at?.position, defaultPosition),
+        rotation: parseTuple3(payload.at?.rotation, [0, 0, 0]),
+        scale: parseTuple3(payload.at?.scale, [1, 1, 1]),
+      };
+
+      ctx.state.data.objects = stableSortObjects([...ctx.state.data.objects, object]);
+      ctx.state.hierarchy[objectId] = null;
+      const events: RuntimeEvent[] = [ctx.emit("scene.objectAdded", { objectId, kind: "mesh", geometryType: object.geometryType })];
+      if (ctx.state.selectedObjectId !== objectId) {
+        ctx.state.selectedObjectId = objectId;
+        events.push(ctx.emit("selection.changed", { objectId }));
+      }
+      markDirty(ctx, events);
+      return { result: { objectId }, events };
+    },
+  });
+
+  commandBus.register({
+    id: "scene.duplicateSelected",
+    run(ctx, input) {
+      const selectedId = ctx.state.selectedObjectId;
+      if (!selectedId) {
+        throw new RuntimeError("MF_ERR_NO_SELECTION", "scene.duplicateSelected requires a selected object.");
+      }
+      const source = findObjectById(ctx.state, selectedId);
+      if (!source) {
+        throw new RuntimeError("MF_ERR_NOT_FOUND", `Selected object "${selectedId}" was not found.`);
+      }
+      const offset = parseTuple3((input as { offset?: unknown })?.offset, [0.6, 0, 0.6]);
+      const objectId = nextObjectId(ctx.state);
+
+      if ("geometryType" in source) {
+        const duplicate: RuntimeObject = {
+          ...deepClone(source),
+          id: objectId,
+          name: uniqueName(ctx.state, source.name),
+          position: [
+            source.position[0] + offset[0],
+            source.position[1] + offset[1],
+            source.position[2] + offset[2],
+          ],
+        };
+        ctx.state.data.objects = stableSortObjects([...ctx.state.data.objects, duplicate]);
+      } else {
+        const duplicate: RuntimeModelInstance = {
+          ...deepClone(source),
+          id: objectId,
+          name: uniqueName(ctx.state, source.name),
+          position: [
+            source.position[0] + offset[0],
+            source.position[1] + offset[1],
+            source.position[2] + offset[2],
+          ],
+        };
+        const instances = [...(ctx.state.data.modelInstances ?? []), duplicate];
+        ctx.state.data.modelInstances = stableSortModelInstances(instances);
+      }
+
+      ctx.state.hierarchy[objectId] = ctx.state.hierarchy[selectedId] ?? null;
+      ctx.state.data.animation = duplicateTracks(ctx.state.data.animation, selectedId, objectId);
+
+      const events: RuntimeEvent[] = [ctx.emit("scene.objectAdded", { objectId, sourceObjectId: selectedId })];
+      if (ctx.state.selectedObjectId !== objectId) {
+        ctx.state.selectedObjectId = objectId;
+        events.push(ctx.emit("selection.changed", { objectId }));
+      }
+      markDirty(ctx, events);
+      return { result: { objectId }, events };
+    },
+  });
+
+  commandBus.register({
+    id: "scene.deleteSelected",
+    run(ctx, input) {
+      const payload = (input as { objectId?: unknown; confirm?: unknown }) ?? {};
+      if (payload.confirm !== true) {
+        throw new RuntimeError("MF_ERR_CONFIRM_REQUIRED", "scene.deleteSelected requires confirm=true.");
+      }
+      const targetId = typeof payload.objectId === "string" ? payload.objectId : ctx.state.selectedObjectId;
+      if (!targetId) {
+        throw new RuntimeError("MF_ERR_NO_SELECTION", "scene.deleteSelected requires a selected object.");
+      }
+      if (!objectExists(ctx.state, targetId)) {
+        throw new RuntimeError("MF_ERR_NOT_FOUND", `Object "${targetId}" was not found.`);
+      }
+
+      const removedIds = new Set<string>([targetId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const [childId, parentId] of Object.entries(ctx.state.hierarchy)) {
+          if (!parentId) continue;
+          if (removedIds.has(parentId) && !removedIds.has(childId)) {
+            removedIds.add(childId);
+            changed = true;
+          }
+        }
+      }
+
+      ctx.state.data.objects = stableSortObjects(ctx.state.data.objects.filter((item) => !removedIds.has(item.id)));
+      ctx.state.data.modelInstances = stableSortModelInstances((ctx.state.data.modelInstances ?? []).filter((item) => !removedIds.has(item.id)));
+      ctx.state.data.animation = removeTracksForObjectIds(ctx.state.data.animation, removedIds);
+      for (const removedId of removedIds) {
+        delete ctx.state.hierarchy[removedId];
+      }
+      for (const [id, parentId] of Object.entries(ctx.state.hierarchy)) {
+        if (parentId && removedIds.has(parentId)) {
+          ctx.state.hierarchy[id] = null;
+        }
+      }
+
+      const events: RuntimeEvent[] = [ctx.emit("scene.objectDeleted", { objectIds: [...removedIds].sort() })];
+      if (ctx.state.selectedObjectId && removedIds.has(ctx.state.selectedObjectId)) {
+        ctx.state.selectedObjectId = null;
+        events.push(ctx.emit("selection.changed", { objectId: null }));
+      }
+      markDirty(ctx, events);
+      return { result: { removedIds: [...removedIds].sort() }, events };
+    },
+  });
+
+  commandBus.register({
+    id: "scene.clearUserObjects",
+    run(ctx, input) {
+      if ((input as { confirm?: unknown })?.confirm !== true) {
+        throw new RuntimeError("MF_ERR_CONFIRM_REQUIRED", "scene.clearUserObjects requires confirm=true.");
+      }
+      const removedIds = [
+        ...ctx.state.data.objects.map((item) => item.id),
+        ...(ctx.state.data.modelInstances ?? []).map((item) => item.id),
+      ];
+      ctx.state.data.objects = [];
+      ctx.state.data.modelInstances = [];
+      ctx.state.data.animation = removeTracksForObjectIds(ctx.state.data.animation, new Set(removedIds));
+      ctx.state.hierarchy = {};
+
+      const events: RuntimeEvent[] = [ctx.emit("scene.objectsCleared", { removedCount: removedIds.length })];
+      if (ctx.state.selectedObjectId !== null) {
+        ctx.state.selectedObjectId = null;
+        events.push(ctx.emit("selection.changed", { objectId: null }));
+      }
+      markDirty(ctx, events);
+      return { result: { removedCount: removedIds.length }, events };
+    },
+  });
+
+  commandBus.register({
+    id: "scene.parent",
+    run(ctx, input) {
+      const payload = input as { childId?: unknown; parentId?: unknown };
+      if (typeof payload?.childId !== "string" || typeof payload.parentId !== "string") {
+        throw new RuntimeError("MF_ERR_INVALID_INPUT", "scene.parent requires childId and parentId.");
+      }
+      if (!objectExists(ctx.state, payload.childId) || !objectExists(ctx.state, payload.parentId)) {
+        throw new RuntimeError("MF_ERR_NOT_FOUND", "scene.parent childId/parentId must exist.");
+      }
+      if (payload.childId === payload.parentId) {
+        throw new RuntimeError("MF_ERR_INVALID_INPUT", "scene.parent childId cannot equal parentId.");
+      }
+      if (isHierarchyCycle(ctx.state.hierarchy, payload.childId, payload.parentId)) {
+        throw new RuntimeError("MF_ERR_INVALID_INPUT", "scene.parent would create a hierarchy cycle.");
+      }
+      if (ctx.state.hierarchy[payload.childId] === payload.parentId) {
+        return { result: { childId: payload.childId, parentId: payload.parentId }, events: [] };
+      }
+      ctx.state.hierarchy[payload.childId] = payload.parentId;
+      const events: RuntimeEvent[] = [ctx.emit("scene.parentChanged", { childId: payload.childId, parentId: payload.parentId })];
+      markDirty(ctx, events);
+      return { result: { childId: payload.childId, parentId: payload.parentId }, events };
+    },
+  });
+
+  commandBus.register({
+    id: "scene.unparent",
+    run(ctx, input) {
+      const payload = input as { childId?: unknown };
+      if (typeof payload?.childId !== "string") {
+        throw new RuntimeError("MF_ERR_INVALID_INPUT", "scene.unparent requires childId.");
+      }
+      if (!objectExists(ctx.state, payload.childId)) {
+        throw new RuntimeError("MF_ERR_NOT_FOUND", `Object "${payload.childId}" was not found.`);
+      }
+      if ((ctx.state.hierarchy[payload.childId] ?? null) === null) {
+        return { result: { childId: payload.childId, parentId: null }, events: [] };
+      }
+      ctx.state.hierarchy[payload.childId] = null;
+      const events: RuntimeEvent[] = [ctx.emit("scene.parentChanged", { childId: payload.childId, parentId: null })];
+      markDirty(ctx, events);
+      return { result: { childId: payload.childId, parentId: null }, events };
+    },
+  });
+
+  commandBus.register({
+    id: "scene.group",
+    run() {
+      throw new RuntimeError("MF_ERR_NOT_IMPLEMENTED", "scene.group requires project format v5 support.");
+    },
+  });
+
+  commandBus.register({
+    id: "scene.ungroup",
+    run() {
+      throw new RuntimeError("MF_ERR_NOT_IMPLEMENTED", "scene.ungroup requires project format v5 support.");
+    },
+  });
+
+  commandBus.register({
+    id: "scene.addCamera",
+    run() {
+      throw new RuntimeError("MF_ERR_NOT_IMPLEMENTED", "scene.addCamera requires project format v5 support.");
+    },
+  });
+
+  commandBus.register({
+    id: "scene.addLight",
+    run() {
+      throw new RuntimeError("MF_ERR_NOT_IMPLEMENTED", "scene.addLight requires project format v5 support.");
     },
   });
 
@@ -867,6 +1271,7 @@ export function createRuntime(options: RuntimeOptions = {}): RuntimeInstance {
         data,
         selectedObjectId: null,
         dirty: false,
+        hierarchy: buildHierarchyFromData(data),
       };
       if (options.staged !== false) {
         staged = deepClone(runtimeState);
@@ -906,11 +1311,13 @@ export function createRuntime(options: RuntimeOptions = {}): RuntimeInstance {
             id: object.id,
             name: object.name,
             geometryType: object.geometryType,
+            parentId: current.hierarchy[object.id] ?? null,
           })),
           modelInstances: stableSortModelInstances(data.modelInstances ?? []).map((instance) => ({
             id: instance.id,
             name: instance.name,
             assetId: instance.assetId,
+            parentId: current.hierarchy[instance.id] ?? null,
           })),
         },
         selection: {

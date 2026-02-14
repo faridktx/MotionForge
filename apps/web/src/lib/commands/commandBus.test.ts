@@ -54,4 +54,47 @@ describe("commandBus", () => {
       unregister();
     }
   });
+
+  it("returns missing status for unknown commands", async () => {
+    const executed = commandBus.execute("missing.command", { respectInputFocus: false });
+    expect(executed).toBe(false);
+
+    const outcome = await commandBus.executeWithResult("missing.command", { respectInputFocus: false });
+    expect(outcome.executed).toBe(false);
+    expect(outcome.reason).toBe("missing");
+  });
+
+  it("surfaces confirm-required and ambiguous-name command failures", async () => {
+    const unregisterConfirm = commandBus.register({
+      id: "test.confirmRequired",
+      title: "Confirm Required",
+      category: "test",
+      run: () => {
+        throw new Error("MF_ERR_CONFIRM_REQUIRED: confirm=true required.");
+      },
+    });
+    const unregisterAmbiguous = commandBus.register({
+      id: "test.ambiguousName",
+      title: "Ambiguous Name",
+      category: "test",
+      run: () => {
+        throw new Error("MF_ERR_AMBIGUOUS_NAME: Cube, Cube 2");
+      },
+    });
+
+    try {
+      const confirmOutcome = await commandBus.executeWithResult("test.confirmRequired", { respectInputFocus: false });
+      expect(confirmOutcome.executed).toBe(false);
+      expect(confirmOutcome.reason).toBe("failed");
+      expect(confirmOutcome.error).toContain("MF_ERR_CONFIRM_REQUIRED");
+
+      const ambiguousOutcome = await commandBus.executeWithResult("test.ambiguousName", { respectInputFocus: false });
+      expect(ambiguousOutcome.executed).toBe(false);
+      expect(ambiguousOutcome.reason).toBe("failed");
+      expect(ambiguousOutcome.error).toContain("MF_ERR_AMBIGUOUS_NAME");
+    } finally {
+      unregisterConfirm();
+      unregisterAmbiguous();
+    }
+  });
 });

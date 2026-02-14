@@ -58,6 +58,30 @@ import {
 import { rendererStatsStore } from "../state/rendererStatsStore.js";
 import { fileDialogStore } from "../state/fileDialogStore.js";
 import { commandBus } from "../lib/commands/commandBus.js";
+import {
+  addPrimitiveObject,
+  addCameraObject,
+  addLightObject,
+  clearUserObjects,
+  deleteObjectById,
+  deleteSelectedObject,
+  duplicateSelectedObject,
+  groupObjects,
+  isPrimitiveType,
+  isLightKind,
+  parentObject,
+  selectObjectById,
+  selectObjectByName,
+  ungroupObject,
+  unparentObject,
+  type AddPrimitiveOptions,
+  type AddCameraOptions,
+  type AddLightOptions,
+  type DuplicateOptions,
+  type GroupOptions,
+  type LightKind,
+  type PrimitiveType,
+} from "../lib/scene/objectCommands.js";
 
 interface TopBarProps {
   onHelp: () => void;
@@ -127,6 +151,94 @@ function readAutosaveSeconds(): number {
 
 function readDevToolsEnabled(): boolean {
   return localStorage.getItem(DEV_TOOLS_KEY) === "1";
+}
+
+function parsePrimitiveTypeFromPayload(payload: unknown): PrimitiveType | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const candidate = (payload as { type?: unknown }).type;
+  return isPrimitiveType(candidate) ? candidate : null;
+}
+
+function parseLightKindFromPayload(payload: unknown): LightKind | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const candidate = (payload as { kind?: unknown }).kind;
+  return isLightKind(candidate) ? candidate : null;
+}
+
+function parseTuple3(value: unknown): [number, number, number] | undefined {
+  if (!Array.isArray(value) || value.length !== 3) return undefined;
+  if (!value.every((part) => typeof part === "number" && Number.isFinite(part))) return undefined;
+  return [value[0], value[1], value[2]];
+}
+
+function parseAddPrimitivePayload(payload: unknown): AddPrimitiveOptions {
+  if (typeof payload !== "object" || payload === null) return {};
+  const data = payload as {
+    name?: unknown;
+    at?: { position?: unknown; rotation?: unknown; scale?: unknown };
+    material?: { color?: unknown; metallic?: unknown; roughness?: unknown };
+  };
+  return {
+    name: typeof data.name === "string" ? data.name : undefined,
+    at: data.at
+      ? {
+          position: parseTuple3(data.at.position),
+          rotation: parseTuple3(data.at.rotation),
+          scale: parseTuple3(data.at.scale),
+        }
+      : undefined,
+    material: data.material
+      ? {
+          color: typeof data.material.color === "number" ? data.material.color : undefined,
+          metallic: typeof data.material.metallic === "number" ? data.material.metallic : undefined,
+          roughness: typeof data.material.roughness === "number" ? data.material.roughness : undefined,
+        }
+      : undefined,
+  };
+}
+
+function parseDuplicatePayload(payload: unknown): DuplicateOptions {
+  if (typeof payload !== "object" || payload === null) return {};
+  return { offset: parseTuple3((payload as { offset?: unknown }).offset) };
+}
+
+function parseGroupPayload(payload: unknown): GroupOptions {
+  if (typeof payload !== "object" || payload === null) return {};
+  const data = payload as { objectIds?: unknown; name?: unknown };
+  return {
+    objectIds: Array.isArray(data.objectIds) ? data.objectIds.filter((value): value is string => typeof value === "string") : undefined,
+    name: typeof data.name === "string" ? data.name : undefined,
+  };
+}
+
+function parseAddCameraPayload(payload: unknown): AddCameraOptions {
+  if (typeof payload !== "object" || payload === null) return {};
+  const data = payload as { name?: unknown; position?: unknown; target?: unknown };
+  return {
+    name: typeof data.name === "string" ? data.name : undefined,
+    position: parseTuple3(data.position),
+    target: parseTuple3(data.target),
+  };
+}
+
+function parseAddLightPayload(payload: unknown): AddLightOptions {
+  if (typeof payload !== "object" || payload === null) return {};
+  const data = payload as {
+    name?: unknown;
+    intensity?: unknown;
+    color?: unknown;
+    position?: unknown;
+  };
+  return {
+    name: typeof data.name === "string" ? data.name : undefined,
+    intensity: typeof data.intensity === "number" ? data.intensity : undefined,
+    color: typeof data.color === "number" ? data.color : undefined,
+    position: parseTuple3(data.position),
+  };
+}
+
+function hasConfirmed(payload: unknown): boolean {
+  return typeof payload === "object" && payload !== null && (payload as { confirm?: unknown }).confirm === true;
 }
 
 function buildProjectDiagnosticsState(data: ReturnType<typeof serializeProject>, payloadSizeBytes: number): ProjectDiagnosticsState {
@@ -487,6 +599,94 @@ export function TopBar({ onHelp }: TopBarProps) {
       const reason = error instanceof Error ? error.message : "unknown import error";
       toastStore.show(`Insert demo model failed: ${reason}`, "error");
     }
+  }, []);
+
+  const handleAddPrimitive = useCallback((type: PrimitiveType, options: AddPrimitiveOptions = {}) => {
+    const addedId = addPrimitiveObject(type, options);
+    if (!addedId) {
+      toastStore.show("Add primitive failed: scene is not ready", "error");
+      return;
+    }
+    const label = type === "box" ? "Cube" : type === "sphere" ? "Sphere" : "Cone";
+    toastStore.show(`${label} added`, "success");
+  }, []);
+
+  const handleDuplicateSelected = useCallback((options: DuplicateOptions = {}) => {
+    const duplicateId = duplicateSelectedObject(options);
+    if (!duplicateId) {
+      toastStore.show("Duplicate failed: no selected object", "info");
+      return;
+    }
+    toastStore.show("Object duplicated", "success");
+  }, []);
+
+  const handleDeleteSelected = useCallback((objectId?: string) => {
+    const deletedId = objectId ? deleteObjectById(objectId) : deleteSelectedObject();
+    if (!deletedId) {
+      toastStore.show("Delete failed: no selected object", "info");
+      return;
+    }
+    toastStore.show("Object deleted", "success");
+  }, []);
+
+  const handleClearUserObjects = useCallback(() => {
+    const removedRoots = clearUserObjects();
+    if (removedRoots <= 0) {
+      toastStore.show("Scene is already empty", "info");
+      return;
+    }
+    toastStore.show(`Cleared ${removedRoots} root object(s)`, "success");
+  }, []);
+
+  const handleAddCamera = useCallback((options: AddCameraOptions = {}) => {
+    const objectId = addCameraObject(options);
+    if (!objectId) {
+      toastStore.show("Add camera failed: scene is not ready", "error");
+      return;
+    }
+    toastStore.show("Camera added", "success");
+  }, []);
+
+  const handleAddLight = useCallback((kind: LightKind, options: AddLightOptions = {}) => {
+    const objectId = addLightObject(kind, options);
+    if (!objectId) {
+      toastStore.show("Add light failed: scene is not ready", "error");
+      return;
+    }
+    toastStore.show("Light added", "success");
+  }, []);
+
+  const handleParent = useCallback((childId: string, parentId: string) => {
+    if (!parentObject(childId, parentId)) {
+      toastStore.show("Parent failed", "error");
+      return;
+    }
+    toastStore.show("Parent updated", "success");
+  }, []);
+
+  const handleUnparent = useCallback((childId: string) => {
+    if (!unparentObject(childId)) {
+      toastStore.show("Unparent failed", "error");
+      return;
+    }
+    toastStore.show("Object unparented", "success");
+  }, []);
+
+  const handleGroup = useCallback((options: GroupOptions = {}) => {
+    const groupId = groupObjects(options);
+    if (!groupId) {
+      toastStore.show("Group failed", "error");
+      return;
+    }
+    toastStore.show("Group created", "success");
+  }, []);
+
+  const handleUngroup = useCallback((groupId: string, preserveWorldTransform = true) => {
+    if (!ungroupObject(groupId, preserveWorldTransform)) {
+      toastStore.show("Ungroup failed", "error");
+      return;
+    }
+    toastStore.show("Group removed", "success");
   }, []);
 
   const handlePurgeUnusedAssets = useCallback(() => {
@@ -882,6 +1082,163 @@ export function TopBar({ onHelp }: TopBarProps) {
   useEffect(() => {
     const unregister = [
       commandBus.register({
+        id: "scene.addPrimitive",
+        title: "Add Primitive",
+        category: "Scene",
+        keywords: ["add", "primitive", "cube", "sphere", "cone"],
+        run: (payload) => {
+          const type = parsePrimitiveTypeFromPayload(payload);
+          if (!type) return;
+          handleAddPrimitive(type, parseAddPrimitivePayload(payload));
+        },
+      }),
+      commandBus.register({
+        id: "scene.addCube",
+        title: "Add Cube",
+        category: "Scene",
+        keywords: ["add", "cube", "primitive", "box"],
+        run: () => handleAddPrimitive("box"),
+      }),
+      commandBus.register({
+        id: "scene.addSphere",
+        title: "Add Sphere",
+        category: "Scene",
+        keywords: ["add", "sphere", "primitive"],
+        run: () => handleAddPrimitive("sphere"),
+      }),
+      commandBus.register({
+        id: "scene.addCone",
+        title: "Add Cone",
+        category: "Scene",
+        keywords: ["add", "cone", "primitive"],
+        run: () => handleAddPrimitive("cone"),
+      }),
+      commandBus.register({
+        id: "scene.duplicateSelected",
+        title: "Duplicate Selected Object",
+        category: "Scene",
+        keywords: ["duplicate", "clone", "object"],
+        isEnabled: () => sceneStore.getSelectedObject() !== null,
+        run: (payload) => handleDuplicateSelected(parseDuplicatePayload(payload)),
+      }),
+      commandBus.register({
+        id: "scene.deleteSelected",
+        title: "Delete Selected Object",
+        category: "Scene",
+        keywords: ["delete", "remove", "object"],
+        isEnabled: () => sceneStore.getSelectedObject() !== null,
+        run: (payload) => {
+          if (!hasConfirmed(payload)) {
+            throw new Error("MF_ERR_CONFIRM_REQUIRED: scene.deleteSelected requires confirm=true.");
+          }
+          const id = typeof (payload as { objectId?: unknown })?.objectId === "string"
+            ? (payload as { objectId: string }).objectId
+            : undefined;
+          handleDeleteSelected(id);
+        },
+      }),
+      commandBus.register({
+        id: "scene.clearUserObjects",
+        title: "Clear User Objects",
+        category: "Scene",
+        keywords: ["clear", "reset", "scene", "delete"],
+        run: (payload) => {
+          if (!hasConfirmed(payload)) {
+            throw new Error("MF_ERR_CONFIRM_REQUIRED: scene.clearUserObjects requires confirm=true.");
+          }
+          handleClearUserObjects();
+        },
+      }),
+      commandBus.register({
+        id: "scene.parent",
+        title: "Parent Object",
+        category: "Scene",
+        keywords: ["parent", "child", "hierarchy"],
+        run: (payload) => {
+          const data = payload as { childId?: unknown; parentId?: unknown };
+          if (typeof data?.childId !== "string" || typeof data.parentId !== "string") return;
+          handleParent(data.childId, data.parentId);
+        },
+      }),
+      commandBus.register({
+        id: "scene.unparent",
+        title: "Unparent Object",
+        category: "Scene",
+        keywords: ["unparent", "detach", "hierarchy"],
+        run: (payload) => {
+          const data = payload as { childId?: unknown };
+          if (typeof data?.childId !== "string") return;
+          handleUnparent(data.childId);
+        },
+      }),
+      commandBus.register({
+        id: "scene.group",
+        title: "Group Objects",
+        category: "Scene",
+        keywords: ["group", "hierarchy", "collection"],
+        run: (payload) => handleGroup(parseGroupPayload(payload)),
+      }),
+      commandBus.register({
+        id: "scene.ungroup",
+        title: "Ungroup Objects",
+        category: "Scene",
+        keywords: ["ungroup", "hierarchy"],
+        run: (payload) => {
+          const data = payload as { groupId?: unknown; preserveWorldTransform?: unknown };
+          if (typeof data?.groupId !== "string") return;
+          handleUngroup(data.groupId, data.preserveWorldTransform !== false);
+        },
+      }),
+      commandBus.register({
+        id: "scene.addCamera",
+        title: "Add Camera",
+        category: "Scene",
+        keywords: ["camera", "add", "scene"],
+        run: (payload) => handleAddCamera(parseAddCameraPayload(payload)),
+      }),
+      commandBus.register({
+        id: "scene.addLight",
+        title: "Add Light",
+        category: "Scene",
+        keywords: ["light", "add", "scene", "directional", "point", "ambient"],
+        run: (payload) => {
+          const kind = parseLightKindFromPayload(payload) ?? "directional";
+          handleAddLight(kind, parseAddLightPayload(payload));
+        },
+      }),
+      commandBus.register({
+        id: "scene.selectById",
+        title: "Select By Id",
+        category: "Scene",
+        keywords: ["select", "id", "scene"],
+        run: (payload) => {
+          const id = typeof (payload as { id?: unknown })?.id === "string"
+            ? (payload as { id: string }).id
+            : null;
+          if (!selectObjectById(id)) {
+            throw new Error(`MF_ERR_NOT_FOUND: object id "${String(id)}" was not found.`);
+          }
+        },
+      }),
+      commandBus.register({
+        id: "scene.selectByName",
+        title: "Select By Name",
+        category: "Scene",
+        keywords: ["select", "name", "scene"],
+        run: (payload) => {
+          const name = typeof (payload as { name?: unknown })?.name === "string"
+            ? (payload as { name: string }).name
+            : "";
+          const result = selectObjectByName(name);
+          if (result.status === "not_found") {
+            throw new Error(`MF_ERR_NOT_FOUND: object name "${name}" was not found.`);
+          }
+          if (result.status === "ambiguous") {
+            throw new Error(`MF_ERR_AMBIGUOUS_NAME: ${result.candidates.join(", ")}`);
+          }
+        },
+      }),
+      commandBus.register({
         id: "project.new",
         title: "New Project",
         category: "Project",
@@ -948,7 +1305,27 @@ export function TopBar({ onHelp }: TopBarProps) {
       }),
     ];
     return () => unregister.forEach((dispose) => dispose());
-  }, [handleExport, handleImport, handleImportBundle, handleInsertDemoModel, handleNew, handleOpenDiagnostics, handleOpenNative, handleOpenVideoExport, handleSave]);
+  }, [
+    handleAddCamera,
+    handleAddLight,
+    handleAddPrimitive,
+    handleClearUserObjects,
+    handleDeleteSelected,
+    handleDuplicateSelected,
+    handleExport,
+    handleGroup,
+    handleImport,
+    handleImportBundle,
+    handleInsertDemoModel,
+    handleNew,
+    handleOpenDiagnostics,
+    handleOpenNative,
+    handleOpenVideoExport,
+    handleParent,
+    handleSave,
+    handleUngroup,
+    handleUnparent,
+  ]);
 
   const filteredCommandActions = useMemo(
     () => {
@@ -967,8 +1344,12 @@ export function TopBar({ onHelp }: TopBarProps) {
     [videoExportSettings],
   );
 
-  const executeCommandAction = useCallback((commandId: string) => {
-    commandBus.execute(commandId, { respectInputFocus: false });
+  const executeCommandAction = useCallback(async (commandId: string) => {
+    const outcome = await commandBus.executeWithResult(commandId, { respectInputFocus: false });
+    if (!outcome.executed && outcome.error) {
+      toastStore.show(outcome.error, "error");
+      return;
+    }
     setCommandPaletteOpen(false);
     setCommandQuery("");
     setCommandActiveIndex(0);
@@ -1052,6 +1433,57 @@ export function TopBar({ onHelp }: TopBarProps) {
             onClick={() => commandBus.execute("project.open", { respectInputFocus: false })}
           >
             Open
+          </button>
+        </div>
+
+        <div className="topbar-nav-group topbar-nav-group--secondary">
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("scene.addCube", { respectInputFocus: false })}
+          >
+            Add Cube
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("scene.addSphere", { respectInputFocus: false })}
+          >
+            Add Sphere
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("scene.addCone", { respectInputFocus: false })}
+          >
+            Add Cone
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("scene.addLight", {
+              respectInputFocus: false,
+              payload: { kind: "directional" },
+            })}
+          >
+            Add Light
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("scene.addCamera", { respectInputFocus: false })}
+          >
+            Add Camera
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("scene.duplicateSelected", { respectInputFocus: false })}
+          >
+            Duplicate
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => commandBus.execute("scene.deleteSelected", {
+              respectInputFocus: false,
+              payload: { confirm: true },
+            })}
+          >
+            Delete
           </button>
         </div>
 
@@ -1328,7 +1760,7 @@ export function TopBar({ onHelp }: TopBarProps) {
                 event.preventDefault();
                 const selected = filteredCommandActions[commandActiveIndex];
                 if (selected) {
-                  executeCommandAction(selected.id);
+                  void executeCommandAction(selected.id);
                 }
                 return;
               }
@@ -1346,7 +1778,7 @@ export function TopBar({ onHelp }: TopBarProps) {
                   key={action.id}
                   className={`topbar-command-item${index === commandActiveIndex ? " is-active" : ""}`}
                   onMouseEnter={() => setCommandActiveIndex(index)}
-                  onClick={() => executeCommandAction(action.id)}
+                  onClick={() => { void executeCommandAction(action.id); }}
                 >
                   <span>{action.title}</span>
                   {action.shortcutLabel && <small>{action.shortcutLabel}</small>}

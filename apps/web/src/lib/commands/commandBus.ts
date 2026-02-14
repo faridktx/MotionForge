@@ -61,8 +61,12 @@ class CommandBus {
       return false;
     }
     if (!this.isEnabled(id)) return false;
-    command.run(options.payload);
-    return true;
+    try {
+      command.run(options.payload);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async executeWithResult(id: string, options: CommandExecuteOptions = {}): Promise<CommandExecuteResult> {

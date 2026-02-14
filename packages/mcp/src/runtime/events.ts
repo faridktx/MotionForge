@@ -1,5 +1,9 @@
 export type RuntimeEventType =
   | "selection.changed"
+  | "scene.objectAdded"
+  | "scene.objectDeleted"
+  | "scene.objectsCleared"
+  | "scene.parentChanged"
   | "object.renamed"
   | "object.materialChanged"
   | "keyframe.added"

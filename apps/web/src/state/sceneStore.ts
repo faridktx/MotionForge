@@ -41,6 +41,14 @@ export function generateId(): string {
   return `obj_${nextId++}`;
 }
 
+function bumpNextIdFromExplicitId(id: string) {
+  const match = /^obj_(\d+)$/.exec(id);
+  if (!match) return;
+  const parsed = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(parsed)) return;
+  nextId = Math.max(nextId, parsed + 1);
+}
+
 function notify(channel: Channel) {
   listeners[channel].forEach((fn) => fn());
 }
@@ -62,6 +70,9 @@ export const sceneStore = {
   // -- Setup --
 
   setScene(s: THREE.Scene, cam: THREE.PerspectiveCamera, target: THREE.Vector3) {
+    // Replace any prior scene bindings to avoid stale Object3D references
+    // after StrictMode remounts in development.
+    this.clearRegistry();
     scene = s;
     camera = cam;
     controlsTarget = target;
@@ -82,7 +93,17 @@ export const sceneStore = {
   // -- Object registry --
 
   registerObject(obj: THREE.Object3D, id?: string, options?: { silent?: boolean }): string {
-    const objId = id ?? generateId();
+    let objId = id ?? generateId();
+    if (id) {
+      if (registry.has(objId) && registry.get(objId) !== obj) {
+        throw new Error(`sceneStore.registerObject id collision: ${objId}`);
+      }
+      bumpNextIdFromExplicitId(objId);
+    } else {
+      while (registry.has(objId)) {
+        objId = generateId();
+      }
+    }
     obj.userData.__sceneId = objId;
     registry.set(objId, obj);
     if (!options?.silent) {
